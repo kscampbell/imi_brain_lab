@@ -1,0 +1,126 @@
+---
+title: "Untitled"
+author: "Kaitlyn Campbell"
+date: "5/12/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(brms)
+library(dplyr)
+library(ggplot2)
+library(tibble)  
+library(tidyverse)
+library(readr)
+library(faintr)
+library(devtools)
+library(rstan)
+library(rstantools)
+library(readr)
+library(tidybayes)
+
+lab <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Brain_IMI_Data.csv")
+
+#View(lab)
+lab$Treatment <- as.factor(lab$Treatment)
+```
+
+```{r wrangle data}
+# Rename Crkt time columns with date
+lab <- lab %>% 
+  rename(July_4_19 = CRKT_sec_July_4) %>% 
+  rename(July_8_19 = CRKT_sec_July_8) %>% 
+  rename(July_11_19 = CRKT_sec_July_11)
+
+# Take 'date' row names and make them into 1 column & fill with crkt time
+lab_long <- lab %>% 
+  gather(key = "Crkt_date", value = "Crkt_time", -Animal_ID, -Treatment, -Mass_g_June_26, -Mass_g_July_3, -Mass_g_July_10, -Mass_g_July_17, -TL_mm_June_26, -TL_mm_July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein)
+
+# Make Crkt_date a factor
+lab_long$Crkt_date <- as.factor(lab_long$Crkt_date)
+lab_long$Treatment <- as.factor(lab_long$Treatment)
+
+# get crkt times on the last feeding trial to compare to imi brain concentrations
+crkt_11_d <- lab_long %>% 
+  filter(Crkt_date == "July_11_19")
+
+# create mean crkt time
+d <- lab_long %>% 
+  group_by(Animal_ID) %>% 
+  mutate(Mean_crkt_time = mean(Crkt_time)) %>% 
+  select(IMI_ng_mg_protein, Mean_crkt_time, Animal_ID, Treatment)
+view(d)
+
+d <- d[!duplicated(d), ]
+```
+
+```{r}
+load("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/saved_models/m_5.5.rda")
+
+plot(hist(rexp(100, 0.04)))
+
+m_5.5 <- brm(Mean_crkt_time ~ log(IMI_ng_mg_protein), data = d , family = Gamma(link = "log"),
+           prior = c(prior(normal(0,2), class= Intercept),
+           prior(normal(1,2), class = b),
+           prior(exponential(0.04), class="shape")),
+          iter = 2500, warmup = 700, chains = 4, cores = 4,
+          seed = 5, control = list(max_treedepth = 15),
+          save_pars = save_pars(all = TRUE))
+plot(m_5.5)
+print(m_5.5)
+post_m5 <- posterior_samples(m_5.5)
+head(post_m5)
+nrow(post_m5) # 7200
+
+ggplot(d, aes(x=log(IMI_ng_mg_protein), y=Mean_crkt_time)) + geom_smooth(method="lm") + geom_jitter(aes(color=Treatment))
+ggplot(d, aes(x=IMI_ng_mg_protein, y=Mean_crkt_time)) + geom_smooth(method="lm") + geom_jitter(aes(color=Treatment))
+```
+
+```{r}
+# slope of model
+crkt_imi_sl <- exp(post_m5$b_logIMI_ng_mg_protein)
+
+sum(crkt_imi_sl>0)/7200 # probability that slope is greater than zero. That probability is >0.99
+
+mean(crkt_imi_sl) # 1.12117
+quantile(crkt_imi_sl, probs=c(0.055, 0.5, 0.945)) # median and credible intervals of the slope: 
+#      5.5%       50%     94.5% 
+# 0.9957982 1.1195391 1.2498702 
+
+# plot it
+m_5plot<-conditional_effects(m_5.5, robust=FALSE)
+m_5plot<-as.data.frame(m_5plot$IMI_ng_mg_protein)
+
+# add colors to plots
+branded_colors <- list(
+  "blue"   = "#00798c",
+  "red"    = "#d1495b",
+  "yellow" = "#edae49",
+  "green"  = "#66a182",
+  "navy"   = "#2e4057", 
+  "grey"   = "#8d96a3"
+)
+
+# the raw data points in this plot represent response times during the last feeding trial only for each individual
+ggplot() +
+  geom_line(data=m_5plot, aes(x=IMI_ng_mg_protein, y=estimate__)) +
+  geom_ribbon(data=m_5plot, aes(x=IMI_ng_mg_protein, ymin=lower__, ymax=upper__), alpha=0.2) + geom_point(data=crkt_11_d, aes(x=IMI_ng_mg_protein, y=Crkt_time, fill=Treatment), shape=21, alpha=0.6) + labs(y="Response Time (sec)", x= "Imidacloprid Brain Concentration (ng/mg protein)")
+
+
+# the raw data points in this plot represent mean response times across all 3 feeding trials for each individual
+crkt_imi_trt_p <- ggplot() +
+  geom_line(data=m_5plot, aes(x=IMI_ng_mg_protein, y=estimate__)) +
+  geom_ribbon(data=m_5plot, aes(x=IMI_ng_mg_protein, ymin=lower__, ymax=upper__), alpha=0.2) + geom_point(data=d, aes(x=IMI_ng_mg_protein, y=Mean_crkt_time, fill=Treatment), shape=21, alpha=0.6) + labs(y="Response Time (sec)", x= "Imidacloprid Brain Concentration (ng/mg protein)") + 
+  theme_classic() +
+  scale_x_log10()+
+  #scale_y_log10()+
+  scale_fill_manual(values = c("#8d96a3","#66a182","#edae49","#2e4057","#d1495b")) +
+  theme(axis.text.x = element_text(color="black", size="10")) +
+  theme(axis.text.y = element_text(color="black", size="10")) +
+  theme(legend.title = element_text(face="bold", size="10"))
+crkt_imi_trt_p
+
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/crkt_imi_trt_p.tiff", crkt_imi_trt_p, dpi=400, width=5, height=3, units="in")
+```
+

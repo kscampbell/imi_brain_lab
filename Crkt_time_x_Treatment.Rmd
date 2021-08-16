@@ -1,0 +1,1471 @@
+---
+title: "Treatment x Crkt time"
+author: "Kaitlyn Campbell"
+date: "1/14/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+Imidacloprid Experiment Summer 2019
+
+# Load packages and data
+```{r}
+library(brms)
+library(dplyr)
+library(ggplot2)
+library(tibble)  
+library(tidyverse)
+library(readr)
+library(faintr)
+library(devtools)
+library(rstan)
+library(rstantools)
+library(readr)
+library(tidybayes)
+library(bayesplot)
+
+lab <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Brain_IMI_Data.csv")
+
+#View(lab)
+lab$Treatment <- as.factor(lab$Treatment)
+```
+
+# Wrangle that data, cowboy
+```{r}
+# Rename Crkt time columns with date
+lab <- lab %>% 
+  rename(July_4_19 = CRKT_sec_July_4) %>% 
+  rename(July_8_19 = CRKT_sec_July_8) %>% 
+  rename(July_11_19 = CRKT_sec_July_11)
+
+# Take 'date' row names and make them into 1 column & fill with crkt time
+lab_long <- lab %>% 
+  gather(key = "Crkt_date", value = "Crkt_time", -Animal_ID, -Treatment, -Mass_g_June_26, -Mass_g_July_3, -Mass_g_July_10, -Mass_g_July_17, -TL_mm_June_26, -TL_mm_July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein)
+
+# Make Crkt_date a factor
+lab_long$Crkt_date <- as.factor(lab_long$Crkt_date)
+lab_long$Treatment <- as.factor(lab_long$Treatment)
+
+# Determine mean crkt times by treatment and date
+lab_long %>% 
+  group_by(Treatment, Crkt_date) %>% 
+  summarize(mean= mean(Crkt_time)) 
+
+x <- lab_long %>% 
+  group_by(Treatment) %>% 
+  summarize(mean= mean(Crkt_time)) 
+
+# Visualize crkt time by date and treatment
+level_order <- c('July_4_19', 'July_8_19', 'July_11_19') 
+
+lab_long %>% 
+  ggplot(aes(x=factor(Crkt_date, level=level_order), y=Crkt_time)) +
+  geom_boxplot(aes(fill = Treatment), position = position_dodge(1)) +
+  scale_y_log10() +
+  labs(x="Date")
+
+# Visualize overall crkt time by treatment
+lab_long %>% 
+  ggplot(aes(x=Treatment, y=Crkt_time)) +
+  geom_boxplot(aes(fill = Treatment), position = position_dodge(1)) +
+  geom_jitter(aes(fill=Treatment), color="black", shape=21, width=0.25) +
+  scale_y_log10() + facet_wrap(~Crkt_date)
+
+lab_long %>% 
+  group_by(Treatment) %>% 
+  summarize(mean_crkt_time = mean(Crkt_time),
+         median_crkt_time = median(Crkt_time))
+
+z <- lab_long %>% 
+  group_by(Animal_ID) %>% 
+  mutate(mean_crkt_time = mean(Crkt_time),
+         median_crkt_time = median(Crkt_time))
+View(z)
+
+zz <- z %>% 
+  select(Animal_ID, Treatment, mean_crkt_time, IMI_ng_mg_protein, median_crkt_time)
+
+zz <- zz[!duplicated(zz$mean_crkt_time), ]
+
+zz %>% 
+  group_by(Treatment) %>% 
+  summarize(mean = mean(mean_crkt_time),
+            median = median(median_crkt_time))
+
+ggplot() + 
+  geom_boxplot(data=zz, aes(x=Treatment, y=mean_crkt_time), position = position_dodge(1)) +
+  geom_jitter(data=lab_long, aes(x=Treatment, y=Crkt_time, fill=Treatment), color="black", shape=21, width=0.25) + scale_y_log10()
+
+ggplot() + 
+  geom_boxplot(data=zz, aes(x=Treatment, y=median), position = position_dodge(1)) +
+  geom_jitter(data=lab_long, aes(x=Treatment, y=Crkt_time, fill=Treatment), color="black", shape=21, width=0.25) + scale_y_log10()
+```
+
+# Visualize mean crkt time
+```{r}
+hist(lab_long$Crkt_time)
+```
+Max time = 120 seconds (we stopped timing the frogs after 2 minutes so we weren't stuck there all day)
+
+# Load fit_crkt2 model
+```{r}
+# load saved model
+load("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/saved_models/fit_crkt14.rda")
+
+fit_crkt14 <- brm(Crkt_time ~ Treatment + Crkt_date + (1|Animal_ID), data = lab_long, family = Gamma(link = "log"),
+    prior=c(prior(normal(3, 1), class=Intercept),
+            prior(normal(0, 1.5), class = b),
+            prior(exponential(8), class="shape")),
+          iter = 2000 , warmup = 500, chains = 4, cores = 4,
+          seed = 5, save_pars = save_pars(all = TRUE))
+
+conditional_effects(fit_crkt14)
+print(fit_crkt14, prior=T)
+plot(fit_crkt14)
+```
+
+# dont use
+# custom function from Jeff
+```{r}
+conditional_posts_fitted <- function(fit){
+list_of_data <- conditional_effects(fit)[[1]]
+col_i <- which(colnames(list_of_data) == names(fit$data[1])) - 1
+new_names <- list_of_data[(1:col_i)]
+
+as_tibble(t(fitted(fit, newdata = list_of_data, re_formula = NA, summary = FALSE))) %>%
+  cbind(new_names) %>%
+  pivot_longer(cols = contains("V"), names_to = "iter") %>%
+  mutate(iter = parse_number(iter))
+} # this function should work fine now
+
+post_fit <- conditional_posts_fitted(fit_crkt2)
+View(post_fit)
+```
+
+# Extract posteriors
+```{r}
+set.seed(4545)
+post_crkt14 <- posterior_samples(fit_crkt14)  # puts chains of model into data frame
+head(post_crkt14)
+nrow(post_crkt14) # 6000
+```
+
+# Compute averages for each treatment category
+```{r}
+as_tibble(post_crkt14) %>% 
+  mutate(iteration = 1:nrow(post_crkt14))
+
+# 0 trt on July_11
+fit_0_J11 <- data.frame(value = exp(post_crkt14$b_Intercept), type = "0", date = "July_11_19", iter = 1:nrow(post_crkt14)) 
+
+# 0 trt on July_4
+fit_0_J4 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Crkt_dateJuly_4_19), type = "0", date = "July_4_19", iter = 1:nrow(post_crkt14)) 
+
+# 0 trt on July_8
+fit_0_J8 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Crkt_dateJuly_8_19), type = "0", date = "July_8_19", iter = 1:nrow(post_crkt14)) 
+
+mu_0 <- rbind(fit_0_J11, fit_0_J4, fit_0_J8)
+
+# 0.1 trt on July_11
+fit_0.1_J11 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment0.1), type = "0.1", date = "July_11_19", iter = 1:nrow(post_crkt14)) 
+
+# 0.1 trt on July_4
+fit_0.1_J4 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment0.1 + post_crkt14$b_Crkt_dateJuly_4_19), type = "0.1", date = "July_4_19", iter = 1:nrow(post_crkt14)) 
+
+# 0.1 trt on July_8
+fit_0.1_J8 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment0.1 + post_crkt14$b_Crkt_dateJuly_8_19), type = "0.1", date = "July_8_19", iter = 1:nrow(post_crkt14)) 
+
+mu_0.1 <- rbind(fit_0.1_J11, fit_0.1_J4, fit_0.1_J8)
+
+# 1 trt on July_11
+fit_1_J11 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment1), type = "1", date = "July_11_19", iter = 1:nrow(post_crkt14)) 
+
+# 1 trt on July_4
+fit_1_J4 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment1 + post_crkt14$b_Crkt_dateJuly_4_19), type = "1", date = "July_4_19", iter = 1:nrow(post_crkt14)) 
+
+# 1 trt on July_8
+fit_1_J8 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment1 + post_crkt14$b_Crkt_dateJuly_8_19), type = "1", date = "July_8_19", iter = 1:nrow(post_crkt14)) 
+
+mu_1 <- rbind(fit_1_J11, fit_1_J4, fit_1_J8)
+
+# 5 trt on July_11
+fit_5_J11 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment5), type = "5", date = "July_11_19", iter = 1:nrow(post_crkt14)) 
+
+# 5 trt on July_4
+fit_5_J4 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment5 + post_crkt14$b_Crkt_dateJuly_4_19), type = "5", date = "July_4_19", iter = 1:nrow(post_crkt14)) 
+
+# 5 trt on July_8
+fit_5_J8 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment5 + post_crkt14$b_Crkt_dateJuly_8_19), type = "5", date = "July_8_19", iter = 1:nrow(post_crkt14)) 
+
+mu_5 <- rbind(fit_5_J11, fit_5_J4, fit_5_J8)
+
+# 10 trt on July_11
+fit_10_J11 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment10), type = "10", date = "July_11_19", iter = 1:nrow(post_crkt14)) 
+
+# 10 trt on July_4
+fit_10_J4 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment10 + post_crkt14$b_Crkt_dateJuly_4_19), type = "10", date = "July_4_19", iter = 1:nrow(post_crkt14)) 
+
+# 10 trt on July_8
+fit_10_J8 <- data.frame(value = exp(post_crkt14$b_Intercept + post_crkt14$b_Treatment10 + post_crkt14$b_Crkt_dateJuly_8_19), type = "10", date = "July_8_19", iter = 1:nrow(post_crkt14)) 
+
+mu_10 <- rbind(fit_10_J11, fit_10_J4, fit_10_J8)
+
+mu_fit <- rbind(mu_0, mu_0.1, mu_1, mu_5, mu_10)
+View(mu_fit)
+```
+
+# Summary stats from posterior with 95% CI
+```{r}
+crkt2_summary <- mu_fit %>% 
+  group_by(date) %>% 
+  summarize(mean = mean(value),
+            median= median(value),
+            sd = sd(value),
+            low89 = quantile(value, probs = 0.055),
+            high89 = quantile(value, probs = 0.945)) %>%
+  mutate_if(is.numeric,round,2)
+
+crkt2_summary
+```
+   type  date        mean median    sd low89 high89
+ 1 0     July_11_19 11.0   10.4   3.64  6.32  17.4 
+ 2 0     July_4_19  14.5   13.7   5.29  7.82  24.0 
+ 3 0     July_8_19   5.78   5.44  2.13  3.12   9.51
+ 4 0.1   July_11_19 22.3   21.0   8.14 12.0   37.2 
+ 5 0.1   July_4_19  29.2   27.6  10.4  15.8   47.8 
+ 6 0.1   July_8_19  11.6   10.9   4.07  6.43  18.8 
+ 7 1     July_11_19 34.8   32.7  12.8  18.8   57.1 
+ 8 1     July_4_19  45.6   42.8  16.7  24.7   75.6 
+ 9 1     July_8_19  18.1   17.1   6.38  9.9   29.4 
+10 5     July_11_19 25.9   24.2   9.91 13.4   43.8 
+11 5     July_4_19  33.8   31.8  12.4  17.9   55.6 
+12 5     July_8_19  13.4   12.5   4.67  7.43  21.7 
+13 10    July_11_19 16.1   15.3   5.93  8.6   26.6 
+14 10    July_4_19  21.2   19.9   7.81 11.1   35.0 
+15 10    July_8_19   8.46   7.87  3.21  4.45  14.1
+
+  type   mean median    sd low89 high89
+1 0      10.4   9.53  5.3   3.88   19.8
+2 0.1    21.0  19.2  10.8   7.89   40.4
+3 1      32.9  30.0  17.0  12.3    63.5
+4 5      24.3  22.0  12.7   9.06   47.4
+5 10     15.2  14.0   7.92  5.56   29.4
+
+  date        mean median    sd low89 high89
+1 July_11_19  22.0   19.4 11.9   8.18   43.7
+2 July_4_19   28.8   25.8 15.5  10.5    57.0
+3 July_8_19   11.5   10.3  6.05  4.22   22.3
+
+```{r}
+lab_long %>% 
+  group_by(Treatment) %>% 
+  summarize(mean = mean(Crkt_time),
+            median = median(Crkt_time))
+```
+
+
+# make plot with facet by feeding trial date
+# legend displays colors for treatment groups
+```{r}
+# make new facet labels
+# make a column in 'summary_4' called 'facet'
+crkt2_summary$facet = factor(crkt2_summary$date, levels = c("July_4_19", "July_8_19", "July_11_19"))
+
+# rename the levels in the 'facet' column
+levels(crkt2_summary$facet) <- c("July 4", "July 8", "July 11")
+
+# values provide color blind palette
+crkt_date_trt <- crkt2_summary %>% 
+  ggplot(aes(x=type, y=mean, ymin=low89, ymax=high89, fill=type)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Response Time (sec)")+
+  theme_classic()+
+  scale_fill_manual(name="Treatment (µg/L)",  values = c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))+
+  facet_grid(. ~ facet)
+crkt_date_trt
+
+#scale_fill_manual(name="Treatment (µg/L)", labels = c("0","0.5", "5", "25", "50"),  values = c("#8d96a3","#66a182","#edae49","#2e4057","#d1495b"))
+
+
+crkt_date_trt <- crkt_date_trt + scale_x_discrete(labels= conclabels)
+crkt_date_trt
+
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/crkt_date_trt.tiff", crkt_date_trt, dpi=400, width=5, height=3, units="in")
+```
+
+```{r}
+mu_fit$facet = factor(mu_fit$date, levels = c("July_4_19", "July_8_19", "July_11_19"))
+
+# rename the levels in the 'facet' column
+levels(mu_fit$facet) <- c("July 4", "July 8", "July 11")
+
+# Rename by name: change "July_4_19" to "July 4"
+levels(lab_long$Crkt_date)[levels(lab_long$Crkt_date)=="July_4_19"] <- "July 4"
+levels(lab_long$Crkt_date)[levels(lab_long$Crkt_date)=="July_8_19"] <- "July 8"
+levels(lab_long$Crkt_date)[levels(lab_long$Crkt_date)=="July_11_19"] <- "July 11"
+
+levels(mu_fit$facet) <- c("July 4", "July 8", "July 11")
+#levels(lab_long$facet) <- c("July 4", "July 8", "July 11")
+
+ggplot()+
+  geom_boxplot(data=mu_fit, aes(x=type, y=value), outlier.shape = NA) +
+  geom_jitter(data=lab_long, aes(x=Treatment, y=Crkt_time, color=Treatment), width=0.4, size=0.5) +
+  xlab("Treatment (µg/L)")+
+  ylab("Response Time (sec)")+
+  #scale_y_log10() +
+  theme_classic()+ 
+  scale_fill_manual(name="Treatment (µg/L)",  values = c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10")) + facet_grid(.~facet) + ylim(c(0,120))
+
+ggplot(data=lab_long, aes(x=Treatment, y=Crkt_time, color=Treatment)) + geom_boxplot(outlier.shape = NA) + geom_jitter(size=0.5) + scale_y_log10()
+```
+
+# PLOT
+# makes decent plot
+```{r facet_wrap by date in 1 column}
+ggplot()+
+  geom_boxplot(data=mu_fit, aes(x=type, y=value), outlier.shape = NA) +
+  geom_jitter(data=lab_long, aes(x=Treatment, y=Crkt_time, color=Treatment), width=0.3, size=0.5) +
+  xlab("Treatment (µg/L)")+
+  ylab("Response Time (sec)")+
+  #scale_y_log10() +
+  theme_classic()+ 
+  scale_fill_manual(name="Treatment (µg/L)",  values = c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10")) + ylim(c(0,120)) + 
+  facet_wrap(~facet , ncol=1)
+  #facet_grid(cols = vars(facet), ncol=1)
+```
+# best plot - use this one
+```{r}
+# reponse time faceted by trial date
+response_time_plot <- ggplot()+
+  geom_violin(data=mu_fit, aes(x=type, y=value, fill=type) , position = "dodge") +
+  geom_boxplot(data=mu_fit, aes(x=type, y=value, fill=type), outlier.shape = NA, width = 0.2, position = position_dodge(0.9)) +
+  geom_jitter(data=lab_long, aes(x=Treatment, y=Crkt_time), width=0.25, shape=1, size=0.5) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Response Time (sec)",
+       fill= "Treatment (µg/L)") +
+  theme_classic()+ 
+  scale_fill_manual(name="Treatment (µg/L)",  values = c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b"))+
+  theme(plot.caption = element_text(hjust = 0)) +
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10")) + 
+  #ylim(c(0,120)) + 
+  scale_y_log10() +
+  facet_wrap(~facet , ncol=1)
+response_time_plot
+
+# average response times from all trial dates
+mean_response_time_plot <- ggplot()+
+  geom_violin(data=mu_fit, aes(x=type, y=value, fill=type) , position = "dodge") +
+  geom_boxplot(data=mu_fit, aes(x=type, y=value, fill=type), outlier.shape = NA, width = 0.2, position = position_dodge(0.9)) +
+  geom_jitter(data=lab_long, aes(x=Treatment, y=Crkt_time), width=0.25, shape=1, size=0.5) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Response Time (sec)",
+       fill= "Treatment (µg/L)") +
+  theme_classic()+ 
+  scale_fill_manual(name="Treatment (µg/L)",  values = c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b"))+
+  theme(plot.caption = element_text(hjust = 0)) +
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10")) + 
+  #ylim(c(0,120)) + 
+  scale_y_log10() 
+mean_response_time_plot
+
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/mean_response_time_plot.tiff", mean_response_time_plot, dpi=400, width=5, height=3, units="in")
+```
+
+```{r}
+# fit_0_J4 = trt 0 on July 4
+# fit_0.1_J4 = trt 0.1 on July 4
+# fit_1_J4 = trt 1 on July 4
+# fit_5_J4 = trt 5 on July 4
+
+# trt 0 vs 0.1 on july 4
+diff_Crkt0_0.1_J4 <- fit_0.1_J4$value - fit_0_J4$value
+mean(diff_Crkt0_0.1_J4) # 14.66917
+quantile(diff_Crkt0_0.1_J4,probs=c(0.055,0.945)) # (0.5272638, 31.9497325)
+sum(diff_Crkt0_0.1_J4>0)/6000 # 95.2%
+
+# trt 0 vs 1 on july 4
+diff_Crkt0_1_J4 <- fit_1_J4$value - fit_0_J4$value
+mean(diff_Crkt0_1_J4) # 31.12534
+quantile(diff_Crkt0_1_J4,probs=c(0.055,0.945)) # (10.25992, 60.34138)
+sum(diff_Crkt0_1_J4>0)/6000 # 99.53%
+
+# trt 0 vs 5 on july 4
+diff_Crkt0_5_J4 <- fit_5_J4$value - fit_0_J4$value
+mean(diff_Crkt0_5_J4) # 19.23987
+quantile(diff_Crkt0_5_J4,probs=c(0.055,0.945)) # ( 3.243473 , 39.940813 )
+sum(diff_Crkt0_5_J4>0)/6000 # 97.5%
+
+# trt 0 vs 10 on july 4
+diff_Crkt0_10_J4 <- fit_10_J4$value - fit_0_J4$value
+mean(diff_Crkt0_10_J4) # 6.660439
+quantile(diff_Crkt0_10_J4,probs=c(0.055,0.945)) # (-5.141245 20.490826)
+sum(diff_Crkt0_10_J4>0)/6000 # 81.52%%
+
+# trt 0 vs 0.1 on july 8
+diff_Crkt0_0.1_J8 <- fit_0.1_J8$value - fit_0_J8$value
+mean(diff_Crkt0_0.1_J8) # 5.813551
+quantile(diff_Crkt0_0.1_J8,probs=c(0.055,0.945)) # (0.22570 12.66137)
+sum(diff_Crkt0_0.1_J8>0)/6000 # 95.2%
+
+# trt 0 vs 1 on july 8
+diff_Crkt0_1_J8 <- fit_1_J8$value - fit_0_J8$value
+mean(diff_Crkt0_1_J8) # 12.32459
+quantile(diff_Crkt0_1_J8,probs=c(0.055,0.945)) # (4.160636 , 23.205177)
+sum(diff_Crkt0_1_J8>0)/6000 # 99.53%
+
+# trt 0 vs 5 on july 8
+diff_Crkt0_5_J8 <- fit_5_J8$value - fit_0_J8$value
+mean(diff_Crkt0_5_J8) # 7.56783
+quantile(diff_Crkt0_5_J8,probs=c(0.055,0.945)) # ( 1.366031 , 15.557908)
+sum(diff_Crkt0_5_J8>0)/6000 # 97.47%
+
+# trt 0 vs 10 on july 8
+diff_Crkt0_10_J8 <- fit_10_J8$value - fit_0_J8$value
+mean(diff_Crkt0_10_J8) # 2.676283
+quantile(diff_Crkt0_10_J8,probs=c(0.055,0.945)) # (-2.120903  , 8.220580)
+sum(diff_Crkt0_10_J8>0)/6000 # 81.52% 
+
+# trt 0 vs 0.1 on july 11
+diff_Crkt0_0.1_J11 <- fit_0.1_J11$value - fit_0_J11$value
+mean(diff_Crkt0_0.1_J11) # 11.3677
+quantile(diff_Crkt0_0.1_J11,probs=c(0.055,0.945)) # ()
+sum(diff_Crkt0_0.1_J11>0)/6000 # 95.18%
+
+# trt 0 vs 1 on july 11
+diff_Crkt0_1_J11 <- fit_1_J11$value - fit_0_J11$value
+mean(diff_Crkt0_1_J11) # 23.87567
+quantile(diff_Crkt0_1_J11,probs=c(0.055,0.945)) # ()
+sum(diff_Crkt0_1_J11>0)/6000 # 99.53%
+
+# trt 0 vs 5 on july 11
+diff_Crkt0_5_J11 <- fit_5_J11$value - fit_0_J11$value
+mean(diff_Crkt0_5_J11) # 14.90513
+quantile(diff_Crkt0_5_J11,probs=c(0.055,0.945)) # ()
+sum(diff_Crkt0_5_J11>0)/6000 # 97.46%
+
+# trt 0 vs 10 on july 11
+diff_Crkt0_10_J11 <- fit_10_J11$value - fit_0_J11$value
+mean(diff_Crkt0_10_J11) # 5.173828
+quantile(diff_Crkt0_10_J11,probs=c(0.055,0.945)) # ()
+sum(diff_Crkt0_10_J11>0)/6000 # 81.52%
+```
+
+# all dates
+```{r}
+# trt 0 vs 0.1 overall (all dates)
+diff_Crkt0_0.1 <- mu_0.1$value - mu_0$value
+mean(diff_Crkt0_0.1) # 10.61681
+quantile(diff_Crkt0_0.1,probs=c(0.055,0.945)) # (0.3526513 26.5642224)
+sum(diff_Crkt0_0.1>0)/18000 # 95.18% ; this is divided by 18,000 b/c there are now 18,000 observations in mu_0.1 and mu_0 instead of only 6,000 (like in post_fit_crkt2)
+
+# trt 0 vs 1 overall (all dates)
+diff_Crkt0_1 <- mu_1$value - mu_0$value
+mean(diff_Crkt0_1) # 22.44187
+sd(diff_Crkt0_1) # 14.60733
+quantile(diff_Crkt0_1,probs=c(0.055,0.945)) # (5.780215 , 48.774999)
+sum(diff_Crkt0_1>0)/18000 # 99.53%
+
+# trt 0 vs 5 overall (all dates)
+diff_Crkt0_5 <- mu_5$value - mu_0$value
+mean(diff_Crkt0_5) # 13.90428
+quantile(diff_Crkt0_5,probs=c(0.055,0.945)) # (1.942204 , 33.115224)
+sum(diff_Crkt0_5>0)/18000 # 97.47%
+
+# trt 0 vs 10 overall (all dates)
+diff_Crkt0_10 <- mu_10$value - mu_0$value
+mean(diff_Crkt0_10) # 4.83685
+sd(diff_Crkt0_10) # 6.503312
+quantile(diff_Crkt0_10,probs=c(0.055,0.945)) # (-3.503181 , 16.183335)
+sum(diff_Crkt0_10>0)/18000 # 81.52%
+```
+
+```{r}
+# trt 0.1 vs 1 overall (all dates)
+diff_Crkt1_0.1 <- mu_1$value - mu_0.1$value
+mean(diff_Crkt1_0.1) # 11.82506
+quantile(diff_Crkt1_0.1,probs=c(0.055,0.945)) # (-5.292284 36.208887)
+sum(diff_Crkt1_0.1>0)/18000 # 85.88%
+
+# trt 0.1 vs 5 overall (all dates)
+diff_Crkt5_0.1 <- mu_5$value - mu_0.1$value
+mean(diff_Crkt5_0.1) # 3.287469
+quantile(diff_Crkt5_0.1,probs=c(0.055,0.945)) # (-12.30712 21.17529)
+sum(diff_Crkt5_0.1>0)/18000 # 63.53%
+
+# trt 0.1 vs 10 overall (all dates)
+diff_Crkt10_0.1 <- mu_0.1$value - mu_10$value
+mean(diff_Crkt10_0.1) # 5.779957
+quantile(diff_Crkt10_0.1,probs=c(0.055,0.945)) # (-6.407244 21.064419)
+sum(diff_Crkt10_0.1>0)/18000 # 78.25%
+
+# trt 1 vs 10 overall (all dates)
+diff_Crkt10_1 <- mu_1$value - mu_10$value
+mean(diff_Crkt10_1) # 17.60502
+quantile(diff_Crkt10_1,probs=c(0.055,0.945)) # (1.510035 , 43.106377)
+sum(diff_Crkt10_1>0)/18000 # 96.67%
+
+# trt 1 vs 5 overall (all dates)
+diff_Crkt5_1 <- mu_1$value - mu_5$value
+mean(diff_Crkt5_1) # 8.537591
+quantile(diff_Crkt5_1,probs=c(0.055,0.945)) # (-10.10629 , 32.40667)
+sum(diff_Crkt5_1>0)/18000 # 76.73%
+
+# trt 1 vs 5 overall (all dates)
+diff_Crkt5_10 <- mu_5$value - mu_10$value
+mean(diff_Crkt5_10) # 9.067426
+quantile(diff_Crkt5_10,probs=c(0.055,0.945)) # (-4.124177 , 27.685015)
+sum(diff_Crkt5_10>0)/18000 # 85.83%
+```
+
+# Where feeding response times among trts different across trial dates?
+```{r 0 trt}
+# trt 0 on July 4 vs 0 on july 8 or july 11
+diff_Crkt0_J4_J8 <- fit_0_J4$value - fit_0_J8$value # july 4 vs july 8th
+mean(diff_Crkt0_J4_J8) # 8.722635
+quantile(diff_Crkt0_J4_J8,probs=c(0.055,0.945)) # (2.698985, 19.037227)
+sum(diff_Crkt0_J4_J8>0)/6000 # 99.88%
+
+diff_Crkt0_J4_J11 <- fit_0_J4$value - fit_0_J11$value # July 4 vs July 11
+mean(diff_Crkt0_J4_J11) # 3.541354
+quantile(diff_Crkt0_J4_J11,probs=c(0.055,0.945)) # (-3.618526, 12.725914)
+sum(diff_Crkt0_J4_J11>0)/6000 # 83.32%
+
+diff_Crkt0_J11_J8 <- fit_0_J11$value - fit_0_J8$value # July 11 vs July 8
+mean(diff_Crkt0_J11_J8) # 5.181281
+quantile(diff_Crkt0_J11_J8,probs=c(0.055,0.945)) # (0.6956264, 11.9119869)
+sum(diff_Crkt0_J11_J8>0)/6000 # 98.83%
+```
+```{r 0.1 trt}
+# trt 0.1 on July 4 vs 0 on july 8 or july 11
+diff_Crkt0.1_J4_J8 <- fit_0.1_J4$value - fit_0.1_J8$value # july 4 vs july 8th
+mean(diff_Crkt0.1_J4_J8) # 17.57825
+quantile(diff_Crkt0.1_J4_J8,probs=c(0.055,0.945)) # (5.246264, 38.449623)
+sum(diff_Crkt0.1_J4_J8>0)/6000 # 0.9988333
+
+diff_Crkt0.1_J4_J11 <- fit_0.1_J4$value - fit_0.1_J11$value # July 4 vs July 11
+mean(diff_Crkt0.1_J4_J11) # 6.842823
+quantile(diff_Crkt0.1_J4_J11,probs=c(0.055,0.945)) # (-7.716029, 23.790050)
+sum(diff_Crkt0.1_J4_J11>0)/6000 # 0.8331667
+
+diff_Crkt0.1_J11_J8 <- fit_0.1_J11$value - fit_0.1_J8$value # July 11 vs July 8
+mean(diff_Crkt0.1_J11_J8) # 10.73543
+quantile(diff_Crkt0.1_J11_J8,probs=c(0.055,0.945)) # (1.232895, 26.638464)
+sum(diff_Crkt0.1_J11_J8>0)/6000 # 0.9883333
+```
+```{r 1 trt}
+# trt 1 on July 4 vs 0 on july 8 or july 11
+diff_Crkt1_J4_J8 <- fit_1_J4$value - fit_1_J8$value # july 4 vs july 8th
+mean(diff_Crkt1_J4_J8) # 27.52338
+quantile(diff_Crkt1_J4_J8,probs=c(0.055,0.945)) # (8.086888, 60.938009)
+sum(diff_Crkt1_J4_J8>0)/6000 # 0.9988333
+
+diff_Crkt1_J4_J11 <- fit_1_J4$value - fit_1_J11$value # July 4 vs July 11
+mean(diff_Crkt1_J4_J11) # 10.79102
+quantile(diff_Crkt1_J4_J11,probs=c(0.055,0.945)) # (-12.28315, 38.74079)
+sum(diff_Crkt1_J4_J11>0)/6000 # 0.8331667
+
+diff_Crkt1_J11_J8 <- fit_1_J11$value - fit_1_J8$value # July 11 vs July 8
+mean(diff_Crkt1_J11_J8) # 16.73236
+quantile(diff_Crkt1_J11_J8,probs=c(0.055,0.945)) # (1.811796, 41.265540)
+sum(diff_Crkt1_J11_J8>0)/6000 # 0.9883333
+```
+```{r 5 trt}
+# trt 5 on July 4 vs 0 on july 8 or july 11
+diff_Crkt5_J4_J8 <- fit_5_J4$value - fit_5_J8$value # july 4 vs july 8th
+mean(diff_Crkt5_J4_J8) # 20.39467
+quantile(diff_Crkt5_J4_J8,probs=c(0.055,0.945)) # (5.885447, 45.043352)
+sum(diff_Crkt5_J4_J8>0)/6000 # 0.9988333
+
+diff_Crkt5_J4_J11 <- fit_5_J4$value - fit_5_J11$value # July 4 vs July 11
+mean(diff_Crkt5_J4_J11) # 7.876093
+quantile(diff_Crkt5_J4_J11,probs=c(0.055,0.945)) # (-9.086507, 28.049928)
+sum(diff_Crkt5_J4_J11>0)/6000 # 0.8331667
+
+diff_Crkt5_J11_J8 <- fit_5_J11$value - fit_5_J8$value # July 11 vs July 8
+mean(diff_Crkt5_J11_J8) # 12.51858
+quantile(diff_Crkt5_J11_J8,probs=c(0.055,0.945)) # (1.380559, 31.702011)
+sum(diff_Crkt5_J11_J8>0)/6000 # 0.9883333
+```
+```{r 10 trt}
+# trt 5 on July 4 vs 0 on july 8 or july 11
+diff_Crkt10_J4_J8 <- fit_10_J4$value - fit_10_J8$value # july 4 vs july 8th
+mean(diff_Crkt10_J4_J8) # 12.70679
+quantile(diff_Crkt10_J4_J8,probs=c(0.055,0.945)) # (3.764372, 27.441084)
+sum(diff_Crkt10_J4_J8>0)/6000 # 0.9988333
+
+diff_Crkt10_J4_J11 <- fit_10_J4$value - fit_10_J11$value # July 4 vs July 11
+mean(diff_Crkt10_J4_J11) # 5.027965
+quantile(diff_Crkt10_J4_J11,probs=c(0.055,0.945)) # (-5.681152, 18.738569)
+sum(diff_Crkt10_J4_J11>0)/6000 # 0.8331667
+
+diff_Crkt10_J11_J8 <- fit_10_J11$value - fit_10_J8$value # July 11 vs July 8
+mean(diff_Crkt10_J11_J8) # 7.678825
+quantile(diff_Crkt10_J11_J8,probs=c(0.055,0.945)) # (0.8708955, 18.7445897)
+sum(diff_Crkt10_J11_J8>0)/6000 # 0.9883333
+```
+
+```{r}
+mu_july4_all_trt <- mu_fit %>% 
+  filter(date == "July_4_19")
+
+mu_july8_all_trt <- mu_fit %>% 
+  filter(date == "July_8_19")
+
+mu_july11_all_trt <- mu_fit %>% 
+  filter(date == "July_11_19")
+
+diff <- mu_july4_all_trt$value - mu_july8_all_trt$value
+mean(diff) # 17.38515
+sd(diff) # 11.1219
+quantile(diff,probs=c(0.055,0.945)) # (3.81548, 45.96478)
+sum(diff>0)/30000 # 0.9988333
+
+diff <- mu_july4_all_trt$value - mu_july11_all_trt$value
+mean(diff) # 6.815851
+quantile(diff,probs=c(0.055,0.945)) # (-7.781502, 28.278934)
+sum(diff>0)/30000 # 0.8331667
+
+diff <- mu_july11_all_trt$value - mu_july8_all_trt$value
+mean(diff) # 10.5693
+sd(diff) # 7.818099
+quantile(diff,probs=c(0.055,0.945)) # (0.9780268, 30.8286892)
+sum(diff>0)/30000 # 0.9883333
+```
+
+
+
+
+
+
+
+# re do these if you want to use the values (just run through them bc the values are based on an older model (fit_crkt2))
+```{r 0.1}
+# trt 0.1 on July 4 vs 0 on july 8 or july 11
+diff_Crkt0.1_J4_J8 <- fit_0.1_J4$value - fit_0.1_J8$value # july 4 vs july 8th
+mean(diff_Crkt0.1_J4_J8) # 22.53862
+quantile(diff_Crkt0.1_J4_J8,probs=c(0.055,0.945)) # (8.502419, 46.251949)
+sum(diff_Crkt0.1_J4_J8>0)/6000 # 99.98%
+
+diff_Crkt0.1_J4_J11 <- fit_0.1_J4$value - fit_0.1_J11$value # July 4 vs July 11
+mean(diff_Crkt0.1_J4_J11) # 9.939748
+quantile(diff_Crkt0.1_J4_J11,probs=c(0.055,0.945)) # (-5.954522, 30.017822)
+sum(diff_Crkt0.1_J4_J11>0)/6000 # 88.95%
+
+diff_Crkt0.1_J11_J8 <- fit_0.1_J11$value - fit_0.1_J8$value # July 11 vs July 8
+mean(diff_Crkt0.1_J11_J8) # 12.59887
+quantile(diff_Crkt0.1_J11_J8,probs=c(0.055,0.945)) # (1.740345, 28.578660)
+sum(diff_Crkt0.1_J11_J8>0)/6000 # 99.2%
+```
+```{r 1}
+diff_Crkt1_J4_J8 <- fit_1_J4$value - fit_1_J8$value # july 4 vs july 8th
+mean(diff_Crkt1_J4_J8) # 34.87848
+quantile(diff_Crkt1_J4_J8,probs=c(0.055,0.945)) # (12.21118, 71.94315)
+sum(diff_Crkt1_J4_J8>0)/6000 # 99.98%
+```
+```{r 5}
+# trt 5 on July 4 vs 0 on july 8 or july 11
+diff_Crkt5_J4_J8 <- fit_5_J4$value - fit_5_J8$value # july 4 vs july 8th
+mean(diff_Crkt5_J4_J8) # 24.95436
+quantile(diff_Crkt5_J4_J8,probs=c(0.055,0.945)) # (9.290589, 50.013471)
+sum(diff_Crkt5_J4_J8>0)/6000 # 99.98%
+
+diff_Crkt5_J4_J11 <- fit_5_J4$value - fit_5_J11$value # July 4 vs July 11
+mean(diff_Crkt5_J4_J11) # 11.12029
+quantile(diff_Crkt5_J4_J11,probs=c(0.055,0.945)) # (-6.163864, 34.402961)
+sum(diff_Crkt5_J4_J11>0)/6000 # 88.95%
+
+diff_Crkt5_J11_J8 <- fit_5_J11$value - fit_5_J8$value # July 11 vs July 8
+mean(diff_Crkt5_J11_J8) # 13.83406
+quantile(diff_Crkt5_J11_J8,probs=c(0.055,0.945)) # (2.12977, 30.86392)
+sum(diff_Crkt5_J11_J8>0)/6000 # 99.2%
+```
+```{r 10}
+# trt 10 on July 4 vs 0 on july 8 or july 11
+diff_Crkt10_J4_J8 <- fit_10_J4$value - fit_10_J8$value # july 4 vs july 8th
+mean(diff_Crkt10_J4_J8) # 16.94664
+quantile(diff_Crkt10_J4_J8,probs=c(0.055,0.945)) # (6.490334, 33.199552)
+sum(diff_Crkt10_J4_J8>0)/6000 # 99.98%
+```
+
+
+
+
+```{r}
+head(post_fit_crkt2)
+post_fit_crkt2 <- post_fit_crkt2 %>% 
+  rename(Treatment0 = "b_Intercept") %>% 
+  rename(Treatment0.1 = "b_Treatment0.1") %>% 
+  rename(Treatment1 = "b_Treatment1") %>% 
+  rename(Treatment5 = "b_Treatment5") %>% 
+  rename(Treatment10 = "b_Treatment10")
+
+post_fit_crkt2 <- post_fit_crkt2 %>% 
+  gather(key = Treatment, value = "Response_time", -Intercept, -shape, -b_Crkt_dateJuly_4_19, -b_Crkt_dateJuly_8_19, -lp__)
+
+# reorder
+post_fit_crkt2$Treatment <- factor(post_fit_crkt2$Treatment, levels = c("Treatment0","Treatment0.1", "Treatment1", "Treatment5", "Treatment10"))
+
+post_fit_crkt2 %>% 
+  ggplot(aes(x = Treatment, y = Response_time, fill = Treatment)) +
+  geom_violin(position = "dodge") + 
+  #scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  labs(x = "Treatment (µg/L)", 
+       y = "Food Response Time (sec)",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + theme(plot.caption = element_text(hjust = 0))
+```
+
+
+
+
+
+
+
+
+### ---------- ###
+```{r}
+# reorder
+post_fit4$Crkt_date <- factor(post_fit4$Crkt_date, levels = c("July_4_19", "July_8_19", "July_11_19"))
+
+# add color blind palette 
+cbbPalette <- c("#999999", "#E69F00", "#009E73", "#D55E00", "#56B4E9")
+
+post_fit4 %>% 
+  filter(Crkt_date == "July_11_19") %>% 
+  ggplot(aes(x = Treatment, y = value, fill = Treatment)) +
+  geom_violin(position = "dodge") + scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  labs(x = "Treatment (µg/L)", 
+       y = "Crkt time (sec)",
+       caption = "Fig. # Comparison of body mass (g) in Northern Leopard frogs by treatment and date. \nResults are averages and 95% credible intervals from the posterior distribution of a Bayesian \ngeneralized linear mixed model.",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=cbbPalette) + 
+  theme(plot.caption = element_text(hjust = 0)) + facet_grid(. ~ Crkt_date)
+
+
+crkt_trtp <- post_fit4 %>% 
+  ggplot(aes(x = Treatment, y = value, fill = Treatment)) +
+  geom_violin(position = "dodge") + scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  labs(x = "Treatment (µg/L)", 
+       y = "Food Response Time (sec)",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=cbbPalette, labels=c("0", "0.5", "5", "25", "50"))+ theme(plot.caption = element_text(hjust = 0))
+crkt_trtp
+
+# create labels with the correct concentrations on the x-axis
+conclabels <- c("0", "0.5", "5", "25", "50")
+
+crkt_trtp_p <- crkt_trtp + scale_x_discrete(labels= conclabels)
+crkt_trtp_p
+
+
+# removed caption:
+# caption = "Fig. # Comparison of food response time (sec) in \nNorthern Leopard frogs by treatment. Results are \naverages and 95% credible intervals from the \nposterior distribution of a Bayesiangeneralized \nlinear mixed model.",
+
+# ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/crkt_trtp_p.tiff", crkt_trtp_p, dpi=400, width=5, height=3, units="in")
+
+# only on july 11
+crkt_july11p <- post_fit4 %>% 
+  filter(Crkt_date == "July_11_19") %>% 
+  ggplot(aes(x = Treatment, y = value, fill = Treatment)) +
+  geom_violin(position = "dodge") + scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  labs(x = "Treatment (µg/L)", 
+       y = "Food Response Time (sec)",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=cbbPalette) + 
+  theme(plot.caption = element_text(hjust = 0))
+crkt_july11p
+
+# ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/crkt_july11p.tiff", crkt_july11p, dpi=400, width=5, height=3, units="in")
+```
+
+```{r}
+summary_4 <- post_fit4 %>% 
+  group_by(Treatment, Crkt_date) %>% 
+  summarize(median = median(value),
+            mean = mean(value),
+            sd = sd(value),
+            low95 = quantile(value, probs = 0.025),
+            high95 = quantile(value, probs = 0.975)) %>%
+  mutate_if(is.numeric,round,2)
+summary_4
+
+summary_4_table <- formattable(summary_4)
+write.table(summary_4_table, file = "summary_4_table.txt", sep = ",", quote = FALSE, row.names = F)
+
+sum_4 <- post_fit4 %>% 
+  group_by(Treatment) %>% 
+  summarize(median = median(value),
+            mean = mean(value),
+            sd = sd(value),
+            low95 = quantile(value, probs = 0.025),
+            high95 = quantile(value, probs = 0.975)) %>%
+  mutate_if(is.numeric,round,2)
+sum_4
+```
+  Treatment median  mean    sd low95 high95
+  <fct>      <dbl> <dbl> <dbl> <dbl>  <dbl>
+1 0           9.88  10.6  5.57  3.02   23.8
+2 0.1        18.0   21.7 14.1   6.24   58.5
+3 1          27.3   31.2 16.8  11.1    73.3
+4 5          19.8   23.2 13.2   7.97   56.7
+5 10         14.5   16.7 12.6   2.64   47.8
+
+
+```{r}
+summary_4 %>% 
+  ggplot(aes(x=Treatment, y=median, ymin=low95, ymax=high95, fill=Crkt_date)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Crkt time (sec)")+
+  theme_classic()+
+  scale_fill_manual(name="Measurement Date", labels = c("July 4","July 8", "July 11"),  values = c("grey100", "grey74", "black"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))+
+  facet_grid(. ~ Crkt_date)
+
+# make new facet labels
+# make a column in 'summary_4' called 'facet'
+summary_4$facet = factor(summary_4$Crkt_date, levels = c("July_4_19", "July_8_19", "July_11_19"))
+
+# rename the levels in the 'facet' column
+levels(summary_4$facet) <- c("July 4", "July 8", "July 11")
+
+crkt_datep <- summary_4 %>% 
+  ggplot(aes(x=Treatment, y=mean, ymin=low95, ymax=high95, fill=facet)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Food Response Time (sec)")+
+  theme_classic()+
+  scale_fill_manual(name="Trial Date", labels = c("July 4","July 8", "July 11"),  values = c("grey100", "grey74", "black"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))+
+  facet_grid(. ~ facet)
+crkt_datep
+
+# create labels with the correct concentrations on the x-axis
+conclabels <- c("0", "0.5", "5", "25", "50")
+
+crkt_datep_p <- crkt_datep + scale_x_discrete(labels= conclabels)
+crkt_datep_p
+
+# ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/crkt_datep_p.tiff", crkt_datep_p, dpi=400, width=5, height=3, units="in")
+
+sum_4 %>% 
+  ggplot(aes(x=Treatment, y=mean, ymin=low95, ymax=high95, fill=Treatment)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Food Response Time (sec)")+
+  theme_classic()
+
+```
+
+# make plot with facet by feeding trial date
+# legend displays colors for treatment groups
+```{r}
+# make new facet labels
+# make a column in 'summary_4' called 'facet'
+summary_4$facet = factor(summary_4$Crkt_date, levels = c("July_4_19", "July_8_19", "July_11_19"))
+
+# rename the levels in the 'facet' column
+levels(summary_4$facet) <- c("July 4", "July 8", "July 11")
+
+# values provide color blind palette
+
+crkt_date_trt <- summary_4 %>% 
+  ggplot(aes(x=Treatment, y=mean, ymin=low95, ymax=high95, fill=Treatment)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Food Response Time (sec)")+
+  theme_classic()+
+  scale_fill_manual(name="Treatment (µg/L)", labels = c("0","0.5", "5", "25", "50"),  values = c("#999999", "#E69F00", "#009E73", "#D55E00", "#56B4E9"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))+
+  facet_grid(. ~ facet)
+crkt_date_trt
+
+# create labels with the correct concentrations on the x-axis
+conclabels <- c("0", "0.5", "5", "25", "50")
+
+crkt_date_trt <- crkt_date_trt + scale_x_discrete(labels= conclabels)
+crkt_date_trt
+
+# ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/crkt_date_trt.tiff", crkt_date_trt, dpi=400, width=5, height=3, units="in")
+```
+
+
+```{r}
+# trt 0 vs 0.1 on july 4
+Crkt0_J4 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_4_19")
+Crkt0.1_J4 <- filter(post_fit4, Treatment == 0.1, Crkt_date == "July_4_19")
+diff_Crkt0_0.1_J4 <- Crkt0.1_J4$value - Crkt0_J4$value
+mean(diff_Crkt0_0.1_J4) # 19.70581
+quantile(diff_Crkt0_0.1_J4,probs=c(0.055,0.945)) # (-4.989461, 61.457526)
+sum(diff_Crkt0_0.1_J4>0)/6000 # 93.4%
+
+# trt 0 vs 1 on july 4
+Crkt0_J4 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_4_19")
+Crkt1_J4 <- filter(post_fit4, Treatment == 1, Crkt_date == "July_4_19")
+diff_Crkt0_1_J4 <- Crkt1_J4$value - Crkt0_J4$value
+mean(diff_Crkt0_1_J4) # 28.31899
+quantile(diff_Crkt0_1_J4,probs=c(0.055,0.945)) # (0.5717052, 78.4652059)
+sum(diff_Crkt0_1_J4>0)/6000 # 97.82%
+
+# trt 0 vs 5 on july 4
+Crkt0_J4 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_4_19")
+Crkt5_J4 <- filter(post_fit4, Treatment == 5, Crkt_date == "July_4_19")
+diff_Crkt0_5_J4 <- Crkt5_J4$value - Crkt0_J4$value
+mean(diff_Crkt0_5_J4) # 18.90762
+quantile(diff_Crkt0_5_J4,probs=c(0.055,0.945)) # (-5.149163, 57.572742)
+sum(diff_Crkt0_5_J4>0)/6000 # 93.3%
+
+# trt 0 vs 10 on july 8
+Crkt0_J8 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_8_19")
+Crkt10_J8 <- filter(post_fit4, Treatment == 10, Crkt_date == "July_8_19")
+diff_Crkt0_10_J8 <- Crkt0_J8$value - Crkt10_J8$value
+mean(diff_Crkt0_10_J8) # 0.2773928
+quantile(diff_Crkt0_10_J8,probs=c(0.055,0.945)) # (-7.115558, 7.474912)
+sum(diff_Crkt0_10_J8>0)/6000 # 54.5%
+
+# trt 0 vs 0.1 on july 11
+Crkt0_J11 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_11_19")
+Crkt0.1_J11 <- filter(post_fit4, Treatment == 0.1, Crkt_date == "July_11_19")
+diff_Crkt0_0.1_J11 <- Crkt0.1_J11$value - Crkt0_J11$value
+mean(diff_Crkt0_0.1_J11) # 6.496015
+quantile(diff_Crkt0_0.1_J11,probs=c(0.055,0.945)) # (-7.80725, 26.58316)
+sum(diff_Crkt0_0.1_J11>0)/6000 # 78.9%
+
+# trt 0 vs 1 on july 11
+Crkt0_J11 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_11_19")
+Crkt1_J11 <- filter(post_fit4, Treatment == 1, Crkt_date == "July_11_19")
+diff_Crkt0_1_J11 <- Crkt1_J11$value - Crkt0_J11$value
+mean(diff_Crkt0_1_J11) # 15.61032
+quantile(diff_Crkt0_1_J11,probs=c(0.055,0.945)) # (-2.445524, 44.539881)
+sum(diff_Crkt0_1_J11>0)/6000 # 95.2%
+
+# trt 0 vs 5 on july 11
+Crkt0_J11 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_11_19")
+Crkt5_J11 <- filter(post_fit4, Treatment == 5, Crkt_date == "July_11_19")
+diff_Crkt0_5_J11 <- Crkt5_J11$value - Crkt0_J11$value
+mean(diff_Crkt0_5_J11) # 7.552541
+quantile(diff_Crkt0_5_J11,probs=c(0.055,0.945)) # (-7.079175, 30.870017)
+sum(diff_Crkt0_5_J11>0)/6000 # 79.9%
+
+# trt 0 vs 10 on july 11
+Crkt0_J11 <- filter(post_fit4, Treatment == 0, Crkt_date == "July_11_19")
+Crkt10_J11 <- filter(post_fit4, Treatment == 10, Crkt_date == "July_11_19")
+diff_Crkt0_10_J11 <- Crkt10_J11$value - Crkt0_J11$value
+mean(diff_Crkt0_10_J11) # 4.983502
+quantile(diff_Crkt0_10_J11,probs=c(0.055,0.945)) # (-8.242547, 22.922609)
+sum(diff_Crkt0_10_J11>0)/6000 # 74%
+
+# trt 0 vs 0.1 overall (all dates)
+Crkt0 <- filter(post_fit4, Treatment == 0)
+Crkt0.1 <- filter(post_fit4, Treatment == 0.1)
+diff_Crkt0_0.1 <- Crkt0.1$value - Crkt0$value
+mean(diff_Crkt0_0.1) # 11.07541
+quantile(diff_Crkt0_0.1,probs=c(0.055,0.945)) # (-5.591098, 45.428881)
+sum(diff_Crkt0_0.1>0)/6000 # 2.638167 ???????
+sum(diff_Crkt0_0.1<0)/6000 # 0.3618333
+sum(diff_Crkt0_0.1<1)/6000 # 0.4666667
+sum(diff_Crkt0_0.1>1)/6000 # 2.533333
+
+
+# trt 0 vs 1 overall (all dates)
+Crkt0 <- filter(post_fit4, Treatment == 0)
+Crkt1 <- filter(post_fit4, Treatment == 1)
+diff_Crkt0_1 <- Crkt1$value - Crkt0$value
+mean(diff_Crkt0_1) # 20.64259
+quantile(diff_Crkt0_1,probs=c(0.055,0.945)) # (-0.1111825, 60.3972739)
+sum(diff_Crkt0_1>0)/6000 # 2.9225 ???????
+
+
+# trt 0 vs 10 overall (all dates)
+Crkt0 <- filter(post_fit4, Treatment == 0)
+Crkt10 <- filter(post_fit4, Treatment == 10)
+diff_Crkt0_10 <- Crkt10$value - Crkt0$value
+mean(diff_Crkt0_10) # 6.099828
+quantile(diff_Crkt0_10,probs=c(0.055,0.945)) # (-7.778957, 34.413477)
+sum(diff_Crkt0_10>0)/6000 # 2.083667 ???????
+sum(diff_Crkt0_10<0)/6000 #0.9163333
+
+```
+
+# were feeding response times different between treatment groups across feeding trial dates?
+```{r}
+# trt 0.1 on July 4 vs 0.1 on july 8 
+Crkt0.1_J4  # 0.1 on July 4
+Crkt0.1_J8 <- filter(post_fit4, Treatment == 0.1, Crkt_date == "July_8_19")
+diff_Crkt0.1_J4_J8 <- Crkt0.1_J4$value - Crkt0.1_J8$value
+mean(diff_Crkt0.1_J4_J8) # 20.07911
+quantile(diff_Crkt0.1_J4_J8,probs=c(0.055,0.945)) # (-4.074444, 61.676856)
+sum(diff_Crkt0.1_J4_J8>0)/6000 # 94.8%
+
+# trt 0.1 on July 8 vs 0.1 on july 11 
+Crkt0.1_J11 <- filter(post_fit4, Treatment == 0.1, Crkt_date == "July_11_19")
+diff_Crkt0.1_J8_J11 <- Crkt0.1_J11$value - Crkt0.1_J8$value
+mean(diff_Crkt0.1_J8_J11) # 6.572069
+quantile(diff_Crkt0.1_J8_J11,probs=c(0.055,0.945)) # (-9.496495, 26.093509)
+sum(diff_Crkt0.1_J8_J11>0)/6000 # 80.1%
+
+# trt 1 on July 4 vs 1 on july 8 
+Crkt1_J4 <- filter(post_fit4, Treatment == 1, Crkt_date == "July_4_19")
+Crkt1_J8 <- filter(post_fit4, Treatment == 1, Crkt_date == "July_8_19")
+diff_Crkt1_J4_J8 <- Crkt1_J4$value - Crkt1_J8$value
+mean(diff_Crkt1_J4_J8) # 17.71824
+quantile(diff_Crkt1_J4_J8,probs=c(0.055,0.945)) # (-17.35217, 67.12049)
+sum(diff_Crkt1_J4_J8>0)/6000 # 84.6%
+
+# trt 1 on July 8 vs 1 on july 11 
+Crkt1_J11 <- filter(post_fit4, Treatment == 1, Crkt_date == "July_11_19")
+diff_Crkt1_J8_J11 <- Crkt1_J11$value - Crkt1_J8$value
+mean(diff_Crkt1_J8_J11) # 4.712325
+quantile(diff_Crkt1_J8_J11,probs=c(0.055,0.945)) # (-25.01680, 34.50902)
+sum(diff_Crkt1_J8_J11>0)/6000 # 65.2%
+
+# trt 10 on July 4 vs 10 on july 8 
+Crkt10_J4 <- filter(post_fit4, Treatment == 10, Crkt_date == "July_4_19")
+Crkt10_J8 <- filter(post_fit4, Treatment == 10, Crkt_date == "July_8_19")
+diff_Crkt10_J4_J8 <- Crkt10_J4$value - Crkt10_J8$value
+mean(diff_Crkt10_J4_J8) # 21.26847
+quantile(diff_Crkt10_J4_J8,probs=c(0.055,0.945)) # (4.65356, 54.36082)
+sum(diff_Crkt10_J4_J8>0)/6000 # 99.75%
+
+# trt 10 on July 8 vs 10 on july 11 
+Crkt10_J11 <- filter(post_fit4, Treatment == 10, Crkt_date == "July_11_19")
+diff_Crkt10_J8_J11 <- Crkt10_J11$value - Crkt10_J8$value
+mean(diff_Crkt10_J8_J11) # 12.36136
+quantile(diff_Crkt10_J8_J11,probs=c(0.055,0.945)) # (1.785254, 30.051391)
+sum(diff_Crkt10_J8_J11>0)/6000 # 99.05%
+```
+## results breakdown:
+# 0.1 trt
+1) 94.8% probability that the 0.1 trt had longer response times (aka was slower) on July 4 compared to July 8
+2) 80.1% probability that the 0.1 trt was slower on July 11 compared to July 8
+
+# 1 trt
+1) 84.6% Pr that the 1 trt group was slower on july 4 vs july 8
+2) 65.2% Pr that the 1 trt was slower on july 11 vs july 8
+
+# 10 trt
+1) 99.75% Pr that the 10 trt was slower on july 4 vs july 8
+2) 99.05% Pr that the 10 trt was slower on july 11 vs july 8
+
+
+######################
+# Extract posteriors
+```{r}
+set.seed(4545)
+post_fit3 <- posterior_samples(fit3)    # puts chains of model into data frame
+head(post_fit3)
+nrow(post_fit3) # 6000
+```
+
+# Compute averages for each treatment category
+```{r}
+as_tibble(post_fit3) %>% 
+  mutate(iteration = 1:nrow(post_fit3))
+
+### control treatment x July_4_19 (first feeding trial date)
+mu_0_July_4 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Crkt_dateJuly_4_19), type = "0", date = "July_4",  iter = 1:nrow(post_fit3))
+
+# control treatment x July_8_19 (2nd feeding trial date)
+mu_0_July_8 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Crkt_dateJuly_8_19), type = "0", date = "July_8",  iter = 1:nrow(post_fit3))
+
+# control treatment x July_11_19 (3rd feeding trial date)
+mu_0_July_11 <- data.frame(crkt_time = exp(post_fit3$b_Intercept), type = "0", date = "July_11",  iter = 1:nrow(post_fit3))
+
+# bind all control + date 
+mu_all_control <- rbind(mu_0_July_4, mu_0_July_8, mu_0_July_11)
+View(mu_all_control)
+
+
+### 0.1 µg/L treatment x July_4_19 (first feeding trial date)
+mu_0.1_July_4 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment0.1 + post_fit3$b_Crkt_dateJuly_4_19 + post_fit3$`b_Treatment0.1:Crkt_dateJuly_4_19`), type = "0.1", date = "July_4",  iter = 1:nrow(post_fit3))
+
+# 0.1 µg/L treatment x July_8_19 (2nd feeding trial date)
+mu_0.1_July_8 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment0.1 + post_fit3$b_Crkt_dateJuly_8_19 + post_fit3$`b_Treatment0.1:Crkt_dateJuly_8_19`), type = "0.1", date = "July_8",  iter = 1:nrow(post_fit3))
+
+# 0.1 µg/L treatment x July_11_19 (3rd feeding trial date)
+mu_0.1_July_11 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment0.1), type = "0.1", date = "July_11",  iter = 1:nrow(post_fit3))
+
+# bind all 0.1 µg/L + date 
+mu_all_0.1 <- rbind(mu_0.1_July_4, mu_0.1_July_8, mu_0.1_July_11)
+
+### 1 µg/L treatment x July_4_19 (first feeding trial date)
+mu_1_July_4 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment1 + post_fit3$b_Crkt_dateJuly_4_19 + post_fit3$`b_Treatment1:Crkt_dateJuly_4_19`), type = "1", date = "July_4",  iter = 1:nrow(post_fit3))
+
+# 1 µg/L treatment x July_8_19 (2nd feeding trial date)
+mu_1_July_8 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment1 + post_fit3$b_Crkt_dateJuly_8_19 + post_fit3$`b_Treatment1:Crkt_dateJuly_8_19`), type = "1", date = "July_8",  iter = 1:nrow(post_fit3))
+
+# 1 µg/L treatment x July_11_19 (3rd feeding trial date)
+mu_1_July_11 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment1), type = "1", date = "July_11",  iter = 1:nrow(post_fit3))
+
+# bind all 1 µg/L + date 
+mu_all_1 <- rbind(mu_1_July_4, mu_1_July_8, mu_1_July_11)
+
+
+### 5 µg/L treatment x July_4_19 (first feeding trial date)
+mu_5_July_4 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment5 + post_fit3$b_Crkt_dateJuly_4_19 + post_fit3$`b_Treatment5:Crkt_dateJuly_4_19`), type = "5", date = "July_4",  iter = 1:nrow(post_fit3))
+
+# 5 µg/L treatment x July_8_19 (2nd feeding trial date)
+mu_5_July_8 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment5 + post_fit3$b_Crkt_dateJuly_8_19 + post_fit3$`b_Treatment5:Crkt_dateJuly_8_19`), type = "5", date = "July_8",  iter = 1:nrow(post_fit3))
+
+# 5 µg/L treatment x July_11_19 (3rd feeding trial date)
+mu_5_July_11 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment5), type = "5",date = "July_11", iter = 1:nrow(post_fit3))
+
+# bind all 5 µg/L + date 
+mu_all_5 <- rbind(mu_5_July_4, mu_5_July_8, mu_5_July_11)
+
+
+### 10 µg/L treatment x July_4_19 (first feeding trial date)
+mu_10_July_4 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment10 + post_fit3$b_Crkt_dateJuly_4_19 + post_fit3$`b_Treatment10:Crkt_dateJuly_4_19`), type = "10", date = "July_4",  iter = 1:nrow(post_fit3))
+
+# 10 µg/L treatment x July_8_19 (2nd feeding trial date)
+mu_10_July_8 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment10 + post_fit3$b_Crkt_dateJuly_8_19 + post_fit3$`b_Treatment10:Crkt_dateJuly_8_19`), type = "10", date = "July_8", iter = 1:nrow(post_fit3))
+
+# 10 µg/L treatment x July_11_19 (3rd feeding trial date)
+mu_10_July_11 <- data.frame(crkt_time = exp(post_fit3$b_Intercept + post_fit3$b_Treatment10), type = "10", date = "July_11", iter = 1:nrow(post_fit3))
+
+# bind all 10 µg/L + date 
+mu_all_10 <- rbind(mu_10_July_4, mu_10_July_8, mu_10_July_11)
+
+mu_all_treatment_date <- rbind(mu_all_control, mu_all_0.1, mu_all_1, mu_all_5, mu_all_10)
+View(mu_all_treatment_date)
+```
+
+```{r}
+# Compute averages for July 8th
+mu_trt_july8 <- rbind(mu_0_July_8, mu_0.1_July_8, mu_1_July_8, mu_5_July_8, mu_10_July_8)
+
+# Compute averages for July 11th
+mu_trt_july11 <- rbind(mu_0_July_11, mu_0.1_July_11, mu_1_July_11, mu_5_July_11, mu_10_July_11)
+```
+
+# Summary stats from posterior with 95% CI
+```{r}
+mu_all_treatment_date %>% 
+  group_by(type, date) %>% 
+  summarize(mean = mean(crkt_time),
+            sd = sd(crkt_time),
+            low95 = quantile(crkt_time, probs = 0.025),
+            high95 = quantile(crkt_time, probs = 0.975)) %>%
+  mutate_if(is.numeric,round,2)
+
+mu_all_treatment_date %>% 
+  group_by(type) %>% 
+  summarize(mean = mean(crkt_time),
+            sd = sd(crkt_time),
+            low95 = quantile(crkt_time, probs = 0.025),
+            high95 = quantile(crkt_time, probs = 0.975)) %>%
+  mutate_if(is.numeric,round,2)
+```
+type  date     mean    sd low95 high95
+0     July_4  14.9   6.1   6.93   30.1
+0     July_8   5.58  2.42  2.49   11.7
+0     July_11 13.5   3.87  7.83   22.7
+
+0.1   July_4  40.8  17.8  18.7    84.2
+0.1   July_8  14.8   6.38  6.9    30.7
+0.1   July_11 19.9   8.24  9.21   39.9
+
+1     July_4  47.2  20.4  22.1    98.2
+1     July_8  27.5  11.4  12.9    57.7
+1     July_11 30.8  12.5  15.1    61.5
+
+5     July_4  39.8  17.6  18.2    83.2
+5     July_8  16.6   7.32  7.78   34.9
+5     July_11 25.6   9.85 12.4    50.8
+
+10    July_4  32.8  14.2  14.7    68.6
+10    July_8   6.22  2.9   2.72   13.7
+10    July_11 22.7   8.38 11.3    43.1
+
+Overall averages:
+type   mean    sd low95 high95
+0      11.3  6.01  2.99   24.9
+0.1    25.2 16.4   8      66.7
+1      35.2 17.6  14.6    79.7
+5      27.4 15.6   9.11   66.4
+10     20.6 14.6   3.24   55.5
+
+# NEED TO FIX
+Calculate relative difference [(Test - Base)/Base]
+```{r}
+# 0 µg/L -> 0.1 µg/L
+((25.2/11.3)/11.3) # 0.197353 --> 0 µg/L frogs were ~0.20 times faster than the 0.1 µg/L group
+
+# 0 µg/L -> 1 µg/L
+((5.11/3.4)/3.4)
+((5.11/2.51)/2.51)
+# 1 µg/L frogs were ~0.44 times slower than control frogs and 0.81 times slower than 0.1 µg/L frogs
+
+# 0 µg/L -> 5 µg/L
+((8.51/3.4)/3.4) 
+((8.51/2.51)/2.51)
+# 5 µg/L frogs were ~0.74 times slower than control frogs and 1.35 times slower than 0.1 µg/L frogs
+
+# 0 µg/L -> 10 µg/L
+((12.2/3.4)/3.4) 
+((12.2/2.51)/2.51)
+# 10 µg/L frogs were ~1.06 times slower than the control and ~ 1.94 times slower than 0.1 µg/L frogs
+```
+
+# Plot posterior for all treatments
+```{r}
+mu_all_treatment_date %>% 
+  ggplot(aes(x = crkt_time, y = reorder(type, crkt_time))) +
+  stat_halfeye(fill = "firebrick4", 
+                point_interval = median_qi, .width = .95) +
+  labs(x = "Time to cricket (sec)",
+       y = NULL) +
+  theme_bw() +
+  theme(panel.grid   = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y  = element_text(hjust = 0)) +
+  scale_x_log10()
+```
+
+# Visualize probability mass for all treatments (+ facet by date)
+```{r}
+# add color blind palette 
+cbbPalette <- c("#999999", "#E69F00", "#009E73", "#D55E00", "#56B4E9")
+
+# show averages over all dates:
+mu_all_treatment_date %>% 
+  ggplot(aes(x = type, y = crkt_time, fill = type)) +
+  geom_violin(position = "dodge") + scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9)) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Food response time (sec)",
+       caption = "Fig. # Comparison of probability mass for food response time (sec) by treatment. Results \nare averages from the posterior distribution of a Bayesian generalized linear model with 95% \ncredible intervals. Larger values indicate slower response times. Y axis is on the log scale.", 
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), plot.title = element_text(face = "bold", hjust = 0.5), plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=cbbPalette) + theme(plot.caption = element_text(hjust = 0))
+
+plot_all_dates <- mu_all_treatment_date %>% 
+  ggplot(aes(x = type, y = crkt_time, fill = type)) +
+  geom_violin(position = "dodge") + scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9)) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Food response time (sec)",
+       caption = "Fig. # Comparison of probability mass for food response time (sec) by treatment and date. \nResults are averages from the posterior distribution of a Bayesian generalized linear model \nwith 95% credible intervals. Larger values indicate slower response times. Y axis is on the log scale.", 
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), plot.title = element_text(face = "bold", hjust = 0.5), plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=cbbPalette) + theme(plot.caption = element_text(hjust = 0))
+
+# make 3 plots displaying each date
+plot_all_dates + facet_grid(. ~ date)
+```
+
+# Visualize probability mass for all treatments only on July 11
+```{r}
+# add color blind palette 
+cbbPalette <- c("#999999", "#E69F00", "#009E73", "#D55E00", "#56B4E9")
+
+mu_trt_july11 %>% 
+  ggplot(aes(x = type, y = crkt_time, fill = type)) +
+  geom_violin(position = "dodge") + scale_y_log10() +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9)) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Food response time (sec)",
+       caption = "Fig. # Comparison of probability mass for food response time (sec) by treatment \non the final day of feeding trials (July 11, 2019). Results are averages obtained from \nthe posterior distribution of a generalized linear model with 95% credible intervals. \nLarger values indicate slower response times. Y axis is on the log scale.", 
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), plot.title = element_text(face = "bold", hjust = 0.5), plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=cbbPalette) + theme(plot.caption = element_text(hjust = 0))
+```
+
+```{r}
+# Difference in crkt time between 0 µg/L and 0.1 µg/L treatments on July_11 (baseline date)
+diff0_0.1_jul11 <- post_fit3 %>% 
+  transmute(dif = exp(b_Intercept + b_Treatment0.1) - exp(b_Intercept))
+
+mean(diff0_0.1_jul11$dif) 
+## 6.40443 sec faster in control group vs 0.1 µg/L group
+
+quantile(diff0_0.1_jul11$dif,probs=c(0.055,0.945)) 
+##      2.5%      97.5% 
+##  -6.76163  26.22151
+
+sum(diff0_0.1_jul11$dif>0)/6000
+## 0.7956% probability that 0 µg/L and 0.1 µg/L treatments are different in terms of time to cricket consumption (on July 11)
+```
+
+```{r}
+# Difference in crkt time between 0 µg/L and 1 µg/L treatments on July_11 (baseline date)
+diff0_1_jul11 <- post_fit3 %>% 
+  transmute(dif = exp(b_Intercept + b_Treatment1) - exp(b_Intercept))
+
+mean(diff0_1_jul11$dif) # average difference
+## 17.28744 sec faster in control group vs 1 µg/L group
+
+quantile(diff0_1_jul11$dif,probs=c(0.055,0.945)) 
+##      2.5%      97.5% 
+##  0.005718765  46.989427176
+
+sum(diff0_1_jul11$dif>0)/6000
+## 0.975% probability that 0 µg/L and 1 µg/L treatments are different in terms of time to cricket consumption (on July 11)
+```
+
+```{r}
+# Difference in crkt time between 0 µg/L and 5 µg/L treatments on July_11 (baseline date)
+diff0_5_jul11 <- post_fit3 %>% 
+  transmute(dif = exp(b_Intercept + b_Treatment5) - exp(b_Intercept))
+
+mean(diff0_5_jul11$dif) 
+## 12.13466 sec faster in control group vs 5 µg/L group
+
+quantile(diff0_5_jul11$dif,probs=c(0.055,0.945)) 
+##      2.5%      97.5% 
+##  -2.707285  36.298114
+
+sum(diff0_5_jul11$dif>0)/6000
+## 0.935% probability that 0 µg/L and 1 µg/L treatments are different in terms of time to cricket consumption (on July 11)
+```
+
+```{r}
+# Difference in crkt time between 0 µg/L and 10 µg/L treatments on July_11 (baseline date)
+diff0_10_jul11 <- post_fit3 %>% 
+  transmute(dif = exp(b_Intercept + b_Treatment10) - exp(b_Intercept))
+
+mean(diff0_10_jul11$dif) 
+## 9.174189 sec faster in control group vs 10 µg/L group
+
+quantile(diff0_10_jul11$dif,probs=c(0.055,0.945)) 
+##      2.5%      97.5% 
+##  -4.195688  28.751349
+
+sum(diff0_10_jul11$dif>0)/6000
+## 0.8946% probability that 0 µg/L and 10 µg/L treatments are different in terms of time to cricket consumption (on July 11)
+```
+
+
+ate out of tweezers:
+0 trt: 1, 7
+1 trt: 29
+5 trt: 38
+10 trt: 41
+```{r}
+lab$Animal_ID <- as.numeric(lab$Animal_ID)
+
+lab_crkt <- lab %>% 
+  filter(Animal_ID >= 2 & Animal_ID <= 6)
+
+lab_crkt2 <- lab %>% 
+  filter(Animal_ID >= 8 & Animal_ID <= 28)
+
+lab_crkt4 <- lab %>% 
+  filter(Animal_ID >= 30 & Animal_ID <= 37)
+
+lab_crkt5 <- lab %>% 
+  filter(Animal_ID >= 39 & Animal_ID <= 40)
+
+lab_crkt6 <- lab %>% 
+  filter(Animal_ID >= 42 & Animal_ID <= 50)
+
+lab_crkt <- rbind(lab_crkt, lab_crkt2, lab_crkt4, lab_crkt5, lab_crkt6)
+```
+
+```{r}
+lab_crkt %>% 
+  ggplot(aes(x=Treatment, y= CRKT_sec_July_11)) + geom_boxplot()
+
+
+
+lab_crkt %>% 
+  group_by(Treatment) %>% 
+  summarize(mean = mean(CRKT_sec_July_11))
+```
+
+
+```{r}
+lab$Animal_ID <- as.factor(lab$Animal_ID)
+
+lab_crkt <- lab %>% 
+  filter(Animal_ID == "Lp_2" %>% 
+           Animal_ID == "Lp_3" %>%
+           Animal_ID == "Lp_4" %>% 
+           Animal_ID == "Lp_5" %>% 
+           Animal_ID == "Lp_6" %>% 
+           Animal_ID == "Lp_8" %>% 
+           Animal_ID == "Lp_9" %>% 
+           Animal_ID == "Lp_10" %>% 
+           Animal_ID == "Lp_11" %>% 
+           Animal_ID == "Lp_12" %>% 
+           Animal_ID == "Lp_13" %>% 
+           Animal_ID == "Lp_14" %>% 
+           Animal_ID == "Lp_15" %>% 
+           Animal_ID == "Lp_16" %>% 
+           Animal_ID == "Lp_17" %>% 
+           Animal_ID == "Lp_18" %>%
+           Animal_ID == "Lp_19" %>% 
+           Animal_ID == "Lp_20" %>% 
+           Animal_ID == "Lp_21" %>% 
+           Animal_ID == "Lp_22" %>% 
+           Animal_ID == "Lp_23" %>% 
+           Animal_ID == "Lp_24" %>% 
+           Animal_ID == "Lp_25" %>%
+           Animal_ID == "Lp_26" %>% 
+           Animal_ID == "Lp_27" %>% 
+           Animal_ID == "Lp_28" %>% 
+           Animal_ID == "Lp_30" %>%
+           Animal_ID == "Lp_31" %>% 
+           Animal_ID == "Lp_32" %>% 
+           Animal_ID == "Lp_33" %>% 
+           Animal_ID == "Lp_34" %>% 
+           Animal_ID == "Lp_35" %>% 
+           Animal_ID == "Lp_36" %>%
+           Animal_ID == "Lp_37" %>% 
+           Animal_ID == "Lp_39" %>% 
+           Animal_ID == "Lp_40" %>% 
+           Animal_ID == "Lp_42" %>% 
+           Animal_ID == "Lp_43" %>% 
+           Animal_ID == "Lp_44" %>% 
+           Animal_ID == "Lp_45" %>% 
+           Animal_ID == "Lp_46" %>% 
+           Animal_ID == "Lp_47" %>% 
+           Animal_ID == "Lp_48" %>% 
+           Animal_ID == "Lp_49" %>% 
+           Animal_ID == "Lp_50" )
+```
+
+
+
+  
