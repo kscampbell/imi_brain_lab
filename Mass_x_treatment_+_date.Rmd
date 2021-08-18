@@ -1,0 +1,499 @@
+---
+title: "Untitled"
+author: "Kaitlyn Campbell"
+date: "2/11/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+IMI Lab experiment
+# Load packages and data
+```{r}
+library(brms)
+library(dplyr)
+library(ggplot2)
+library(tibble)  
+library(tidyverse)
+library(readr)
+library(faintr)
+library(devtools)
+library(rstan)
+library(rstantools)
+library(readr)
+library(tidybayes)
+library(bayesplot)
+```
+```{r}
+lab <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Brain_IMI_Data.csv")
+
+lab$Treatment <- as.factor(lab$Treatment)
+
+# Rename Mass_g_date columns with just the date
+lab <- lab %>% 
+  rename(June_26 = Mass_g_June_26) %>% 
+  rename(July_3 = Mass_g_July_3) %>% 
+  rename(July_10 = Mass_g_July_10) %>% 
+  rename(July_17 = Mass_g_July_17)
+
+# Make a new column named 'Mass_date' and fill it with the dates that we just created above. Then make another new column named 'Mass_g' and fill the column with mass_g values that correspond to each date in the new 'Mass_date' column
+lab_long <- lab %>% 
+  gather(key = "Mass_date", value = "Mass_g", -Animal_ID, -Treatment, -TL_mm_June_26, -TL_mm_July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein, -CRKT_sec_July_4, -CRKT_sec_July_8, -CRKT_sec_July_11)
+
+# Make Mass_date a factor
+lab_long$Mass_date <- as.factor(lab_long$Mass_date)
+lab_long$Treatment <- as.factor(lab_long$Treatment)
+```
+
+# Plot raw data
+```{r}
+lab_long %>% 
+  ggplot(aes(x=Treatment, y= Mass_g)) + geom_violin() + geom_boxplot(width=.1) + facet_wrap(. ~ Mass_date)
+
+lab_long %>% 
+  ggplot(aes(x=Treatment, y= Mass_g)) + geom_violin() + geom_point(size=.5) + facet_wrap(. ~ Mass_date)
+
+lab_long %>% 
+  group_by(Mass_date, Treatment) %>% 
+  summarize(mean_mass = mean(Mass_g))
+```
+  Mass_date Treatment mean_mass
+June_26   0              20.6
+June_26   0.1            18.8
+June_26   1              17.3
+June_26   5              21.0
+June_26   10             15.5
+
+July_3    0              20.4
+July_3    0.1            18.6
+July_3    1              16.6
+July_3    5              19.9
+July_3    10             14.4
+
+July_10   0              21.4
+July_10   0.1            19.0
+July_10   1              17.0
+July_10   5              20.3
+July_10   10             15.2
+
+July_17   0              18.4
+July_17   0.1            16.9
+July_17   1              15.1
+July_17   5              18.6
+July_17   10             13.4
+
+# Gamma distribution
+# Add Mass date into model
+```{r}
+load("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/saved_models/Models_used_in_paper/fit_11.rda")
+
+fit_11 <- brm(Mass_g ~ Treatment * Mass_date + (1|Animal_ID), data = lab_long, family = Gamma(link = "log"), prior=c(prior(normal(3, 2), class=Intercept),
+                  prior(normal(0, 1), class = b),
+                  prior(exponential(0.01), class="shape")),
+          iter = 2000 , warmup = 500, chains = 4, cores = 4,
+          seed = 5, save_pars = save_pars(all = TRUE))
+
+print(fit_11)
+pp_check(fit_11, type = "dens_overlay", resp = "Mass_g", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Intercept", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Treatment0.1", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Treatment1", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Treatment1", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Treatment5", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Treatment10", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Mass_date_July_10", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Mass_date_July_17", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Mass_date_June_26", nsamples=100)
+pp_check(fit_11, type = "dens_overlay", resp = "Mass_date_July_3", nsamples=100)
+
+lab_long %>%
+  tidybayes::add_predicted_draws(model = fit_11, n = 100) %>%
+  ungroup() %>%
+  ggplot(aes(x = .prediction, group = .draw)) +
+  geom_line(stat = 'density',
+            alpha = 0.1,
+            colour = 'blue') +
+  geom_line(stat = 'density',
+            data = lab_long,
+            mapping = aes(x = Mass_g, group = NULL),
+            colour = 'black',
+            size = 1.5) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(x = expression(paste('Mass_g density ')),
+       title = 'Mass_g density, actual versus predicted') +
+  facet_wrap(~ Treatment)
+
+
+loo_fit_11 <- loo(fit_11, save_psis = TRUE, cores = 2, moment_match = TRUE)
+print(loo_fit_11) # ok = 32
+plot(loo_fit_11, label_points = TRUE)
+
+yrep <- posterior_predict(fit_11)
+ppc_loo_pit_overlay(lab_long$Mass_g, 
+                    yrep = yrep, 
+                    lw = weights(loo_fit_11$psis_object))
+
+
+# reorder levels in lab_long
+lab_long$Mass_date <- factor(lab_long$Mass_date, levels = c("June_26", "July_3", "July_10", "July_17"))
+
+print(fit_11)
+pp_check(fit_11, type = "boxplot", notch=FALSE)
+pp_check(fit_11, type="hist")
+pp_check(fit_11, nsamples=100)
+pp_check(fit_11, type='stat', stat='mean')
+plot(fit_11)
+
+plot(conditional_effects(fit_11), points = T)
+```
+
+```{r}
+post_fit_11 <- posterior_samples(fit_11)
+nrow(post_fit_11) # 6000
+head(post_fit_11)
+
+as_tibble(post_fit_11) %>% 
+  mutate(iteration = 1:nrow(post_fit_11))
+
+# 0 trt on June_26
+fit_0_J26 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Mass_dateJune_26), type = "0", date = "June_26", iter = 1:nrow(post_fit_11)) 
+
+# 0 trt on July_10
+fit_0_J10 <- data.frame(value = exp(post_fit_11$b_Intercept), type = "0", date = "July_10", iter = 1:nrow(post_fit_11)) 
+
+# 0 trt on July_3
+fit_0_J3 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Mass_dateJuly_3), type = "0", date = "July_3", iter = 1:nrow(post_fit_11)) 
+
+# 0 trt on July_17
+fit_0_J17 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Mass_dateJuly_17), type = "0", date = "July_17", iter = 1:nrow(post_fit_11)) 
+
+mu_0 <- rbind(fit_0_J26, fit_0_J10, fit_0_J3, fit_0_J17)
+
+# 0.1 trt on June_26
+fit_0.1_J26 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment0.1 + post_fit_11$b_Mass_dateJune_26 + post_fit_11$`b_Treatment0.1:Mass_dateJuly_17`), type = "0.1", date = "June_26", iter = 1:nrow(post_fit_11)) 
+
+# 0.1 trt on July_10
+fit_0.1_J10 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment0.1), type = "0.1", date = "July_10", iter = 1:nrow(post_fit_11)) 
+
+# 0.1 trt on July_3
+fit_0.1_J3 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment0.1 + post_fit_11$b_Mass_dateJuly_3 + post_fit_11$`b_Treatment0.1:Mass_dateJuly_3`), type = "0.1", date = "July_3", iter = 1:nrow(post_fit_11)) 
+
+# 0.1 trt on July_17
+fit_0.1_J17 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment0.1 + post_fit_11$b_Mass_dateJuly_17 + post_fit_11$`b_Treatment1:Mass_dateJuly_17`), type = "0.1", date = "July_17", iter = 1:nrow(post_fit_11)) 
+
+mu_0.1 <- rbind(fit_0.1_J26, fit_0.1_J10, fit_0.1_J3, fit_0.1_J17)
+
+# 1 trt on June_26
+fit_1_J26 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment1 + post_fit_11$b_Mass_dateJune_26 + post_fit_11$`b_Treatment1:Mass_dateJune_26`), type = "1", date = "June_26", iter = 1:nrow(post_fit_11)) 
+
+# 1 trt on July_10
+fit_1_J10 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment1), type = "1", date = "July_10", iter = 1:nrow(post_fit_11)) 
+
+# 1 trt on July_3
+fit_1_J3 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment1 + post_fit_11$b_Mass_dateJuly_3 + post_fit_11$`b_Treatment1:Mass_dateJuly_3`), type = "1", date = "July_3", iter = 1:nrow(post_fit_11)) 
+
+# 1 trt on July_17
+fit_1_J17 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment1 + post_fit_11$b_Mass_dateJuly_17 + post_fit_11$`b_Treatment1:Mass_dateJuly_17`), type = "1", date = "July_17", iter = 1:nrow(post_fit_11)) 
+
+mu_1 <- rbind(fit_1_J26, fit_1_J10, fit_1_J3, fit_1_J17)
+
+# 5 trt on June_26
+fit_5_J26 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment5 + post_fit_11$b_Mass_dateJune_26 + post_fit_11$`b_Treatment5:Mass_dateJune_26`), type = "5", date = "June_26", iter = 1:nrow(post_fit_11))
+
+# 5 trt on July_10
+fit_5_J10 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment5), type = "5", date = "July_10", iter = 1:nrow(post_fit_11)) 
+
+# 5 trt on July_3
+fit_5_J3 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment5 + post_fit_11$b_Mass_dateJuly_3 + post_fit_11$`b_Treatment5:Mass_dateJuly_3`), type = "5", date = "July_3", iter = 1:nrow(post_fit_11)) 
+
+# 5 trt on July_17
+fit_5_J17 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment5 + post_fit_11$b_Mass_dateJuly_17 + post_fit_11$`b_Treatment5:Mass_dateJuly_17`), type = "5", date = "July_17", iter = 1:nrow(post_fit_11)) 
+
+mu_5 <- rbind(fit_5_J26, fit_5_J10, fit_5_J3, fit_5_J17)
+
+# 10 trt on June_26
+fit_10_J26 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment10 + post_fit_11$b_Mass_dateJune_26 + post_fit_11$`b_Treatment10:Mass_dateJune_26`), type = "10", date = "June_26", iter = 1:nrow(post_fit_11))
+
+# 10 trt on July_10
+fit_10_J10 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment10), type = "10", date = "July_10", iter = 1:nrow(post_fit_11)) 
+
+# 10 trt on July_3
+fit_10_J3 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment10 + post_fit_11$b_Mass_dateJuly_3 + post_fit_11$`b_Treatment10:Mass_dateJuly_3`), type = "10", date = "July_3", iter = 1:nrow(post_fit_11)) 
+
+# 10 trt on July_17
+fit_10_J17 <- data.frame(value = exp(post_fit_11$b_Intercept + post_fit_11$b_Treatment10 + post_fit_11$b_Mass_dateJuly_17 + post_fit_11$`b_Treatment10:Mass_dateJuly_17`), type = "10", date = "July_17", iter = 1:nrow(post_fit_11)) 
+
+mu_10 <- rbind(fit_10_J26, fit_10_J10, fit_10_J3, fit_10_J17)
+mu_fit <- rbind(mu_0, mu_0.1, mu_1, mu_5, mu_10)
+```
+
+# Plot results however you see fit
+```{r}
+# reorder
+mu_fit$date <- factor(mu_fit$date, levels = c("June_26", "July_3", "July_10", "July_17"))
+
+# add color blind palette 
+#cbbPalette <- c("#999999", "#E69F00", "#009E73", "#D55E00", "#56B4E9")
+
+# new color palette
+colorpalette <- c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b")
+
+M_trt_datep <- mu_fit %>% 
+  ggplot(aes(x = type, y = value, fill = type)) +
+  geom_violin(position = "dodge") +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  labs(x = "Treatment (µg/L)", 
+       y = "Body Mass (g)",
+       caption = "Fig. # Comparison of body mass (g) in Northern Leopard frogs by treatment and date. \nResults are averages and 95% credible intervals from the posterior distribution of a Bayesian \ngeneralized linear mixed model.",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=colorpalette) + 
+  theme(plot.caption = element_text(hjust = 0)) + facet_grid(. ~ date)
+M_trt_datep
+
+# save plot
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/M_trt_datep.tiff", M_trt_datep, dpi=400, width=5, height=3, units="in")
+```
+
+# create summary output
+```{r}
+summary_11 <- mu_fit %>% 
+  filter(date == "June_26" | date == "July_17") %>% 
+  group_by(type, date) %>% 
+  summarize(median = median(value),
+            mean = mean(value),
+            sd = sd(value),
+            low89 = quantile(value, probs = 0.055),
+            high89 = quantile(value, probs = 0.945)) %>%
+  mutate_if(is.numeric,round,2)
+summary_11
+```
+   type  date    median  mean    sd low89 high89
+ 1 0     June_26   20.3  20.4  1.44  18.2   22.7
+ 2 0     July_17   17.9  18.0  1.27  16.1   20.1
+ 
+ 3 0.1   June_26   19.0  19.0  1.41  16.8   21.4
+ 4 0.1   July_17   16.7  16.7  1.24  14.8   18.7
+ 
+ 5 1     June_26   17.0  17.1  1.23  15.2   19.1
+ 6 1     July_17   14.9  14.9  1.07  13.3   16.7
+ 
+ 7 5     June_26   19.8  19.8  1.42  17.7   22.2
+ 8 5     July_17   17.7  17.7  1.27  15.8   19.9
+ 
+ 9 10    June_26   15.4  15.4  1.11  13.7   17.2
+10 10    July_17   13.2  13.2  0.94  11.7   14.8
+
+# this remakes the graph with means and error bars for Mass on diff dates
+```{r}
+M_trtp <- summary_11 %>% 
+  ggplot(aes(x=type, y=mean, ymin=low89, ymax=high89, fill=date)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Body Mass (g)")+
+  theme_classic()+
+  scale_fill_manual(name="Measurement Date", labels = c("June 26","July 17"),  values = c("grey100","black"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))
+M_trtp
+
+summary_11 %>% 
+  ggplot(aes(x=type, y=mean, ymin=low89, ymax=high89, fill=date)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Body Mass (g)")+
+  theme_classic()+
+  scale_fill_manual(name="Measurement Date", labels = c("June 26","July 17"),  values = c("grey100","black"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))
+
+# save plot
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/M_trtp.tiff", M_trtp, dpi=400, width=5, height=3, units="in")
+```
+
+# Compare differences in Mass_dateJune26 and Mass_dateJuly_17 for each trt
+```{r}
+# trt 0
+diff_M0_2617 <- as.data.frame((fit_0_J26$value) - (fit_0_J17$value))
+diff_M0_2617 <- diff_M0_2617 %>% 
+  rename(mass_loss = '(fit_0_J26$value) - (fit_0_J17$value)')
+diff_M0_2617 <- diff_M0_2617 %>% 
+  mutate(Treatment = "0")
+mean(diff_M0_2617$mass_loss) # 2.381888 (avg body mass loss = 2.4 g)
+quantile(diff_M0_2617$mass_loss,probs=c(0.055,0.945)) # (1.736097 , 3.079348)
+sum(diff_M0_2617$mass_loss>0)/6000 # >99.99%
+
+# trt 0.1
+diff_M0.1_2617 <- as.data.frame((fit_0.1_J26$value) - (fit_0.1_J17$value))
+diff_M0.1_2617 <- diff_M0.1_2617 %>% 
+  rename(mass_loss = '(fit_0.1_J26$value) - (fit_0.1_J17$value)')
+diff_M0.1_2617 <- diff_M0.1_2617 %>% 
+  mutate(Treatment = "0.1")
+mean(diff_M0.1_2617$mass_loss) # 2.31652
+quantile(diff_M0.1_2617$mass_loss,probs=c(0.055,0.945)) # (1.282076 , 3.375572)
+sum(diff_M0.1_2617$mass_loss>0)/6000 # 0.9996667
+
+# trt 1
+diff_M1_2617 <- as.data.frame((fit_1_J26$value) - (fit_1_J17$value))
+diff_M1_2617 <- diff_M1_2617 %>% 
+  rename(mass_loss = '(fit_1_J26$value) - (fit_1_J17$value)')
+diff_M1_2617 <- diff_M1_2617 %>% 
+  mutate(Treatment = "1")
+mean(diff_M1_2617$mass_loss) # 2.189514
+quantile(diff_M1_2617$mass_loss,probs=c(0.055,0.945)) # (1.631429 2.788458)
+sum(diff_M1_2617$mass_loss>0)/6000 # 1
+
+# trt 5
+diff_M5_2617 <- as.data.frame((fit_5_J26$value) - (fit_5_J17$value))
+diff_M5_2617 <- diff_M5_2617 %>% 
+  rename(mass_loss = '(fit_5_J26$value) - (fit_5_J17$value)')
+diff_M5_2617 <- diff_M5_2617 %>% 
+  mutate(Treatment = "5")
+mean(diff_M5_2617$mass_loss) # 2.076317
+quantile(diff_M5_2617$mass_loss,probs=c(0.055,0.945)) # (1.432765 2.771573)
+sum(diff_M5_2617$mass_loss>0)/6000 # 1
+
+# trt 10
+diff_M10_2617 <- as.data.frame((fit_10_J26$value) - (fit_10_J17$value))
+diff_M10_2617 <- diff_M10_2617 %>% 
+  rename(mass_loss = '(fit_10_J26$value) - (fit_10_J17$value)')
+diff_M10_2617 <- diff_M10_2617 %>% 
+  mutate(Treatment = "10")
+mean(diff_M10_2617$mass_loss) # 2.173212
+quantile(diff_M10_2617$mass_loss,probs=c(0.055,0.945)) # (1.645940 2.742987)
+sum(diff_M10_2617$mass_loss>0)/6000 # 1
+```
+
+# combine all dataframes with mass_loss for each treatment
+```{r}
+all_mass_loss_2617 <- rbind(diff_M0_2617, diff_M0.1_2617, diff_M1_2617, diff_M5_2617, diff_M10_2617)
+
+all_mass_loss_2617$Treatment <- as.factor(all_mass_loss_2617$Treatment)
+
+all_mass_loss_2617 %>% 
+  group_by(Treatment) %>% 
+  summarize(mean = mean(mass_loss),
+            sd = sd(mass_loss))
+```
+
+```{r}
+# reorder levels
+all_mass_loss_2617$Treatment <- factor(all_mass_loss_2617$Treatment, levels = c("0", "0.1", "1", "5", "10"))
+
+lab <- lab %>% 
+  group_by(Animal_ID) %>% 
+  mutate(Mass_diff = (Mass_g_June_26) - (Mass_g_July_17))
+
+colorpalette <- c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b")
+
+mass_loss_p <- all_mass_loss_2617 %>% 
+  ggplot(aes(x = Treatment, y = mass_loss, fill = Treatment)) +
+  geom_violin(position = "dodge") +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  geom_jitter(data=lab, aes(x=Treatment, y=Mass_diff), shape=21, alpha=0.6) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Decrease in Body Mass (g)",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=colorpalette) + 
+  theme(axis.text.x = element_text(color="black", size="10")) +
+  theme(axis.text.y = element_text(color="black", size="10")) +
+  theme(legend.title = element_text(face="bold", size="10"))
+mass_loss_p
+
+# save plot
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/mass_loss_p.tiff", mass_loss_p, dpi=400, width=5, height=3, units="in")
+```
+
+# was starting mass different between the control and treatment groups?
+```{r}
+# 0 vs 0.1 trt
+SM_0_0.1 <- fit_0_J26$value - fit_0.1_J26$value
+View(SM_0_0.1)
+mean(SM_0_0.1)                             # 1.359741
+quantile(SM_0_0.1, probs=c(0.055,0.945))   # (-1.752337  4.490054)
+sum(SM_0_0.1>0)/6000                       # 0.7545
+
+# 0 vs 1 trt
+SM_0_1 <- fit_0_J26$value - fit_1_J26$value
+View(SM_0_1)
+mean(SM_0_1)                             # 3.295305
+quantile(SM_0_1, probs=c(0.055,0.945))   # (0.2741547 6.3458037)
+sum(SM_0_1>0)/6000                       # 0.9606667
+
+# 0 vs 5 trt
+SM_0_5 <- fit_0_J26$value - fit_5_J26$value
+View(SM_0_5)
+mean(SM_0_5)                             # 0.5726621
+quantile(SM_0_5, probs=c(0.055,0.945))   # (-2.649522  3.817514)
+sum(SM_0_5>0)/6000                       # 0.6135%
+
+# 0 vs 10 trt
+SM_0_10 <- fit_0_J26$value - fit_10_J26$value
+View(SM_0_10)
+mean(SM_0_10)                             # 4.997143
+quantile(SM_0_10, probs=c(0.055,0.945))   # (2.153778 7.892793)
+sum(SM_0_10>0)/6000                       # 0.999%
+```
+
+# was final mass different between control and trts?
+```{r}
+# 0 vs 0.1 trt
+FM_0_0.1 <- fit_0_J17$value - fit_0.1_J17$value
+mean(FM_0_0.1)                             # 1.294372
+quantile(FM_0_0.1, probs=c(0.055,0.945))   # (-1.487836  4.090081)
+sum(FM_0_0.1>0)/6000                       # 0.7726667%
+
+# 0 vs 1 trt
+FM_0_1 <- fit_0_J17$value - fit_1_J17$value
+mean(FM_0_1)                             # 3.102931
+quantile(FM_0_1, probs=c(0.055,0.945))   # (0.4199338 5.7475703)
+sum(FM_0_1>0)/6000                       # 0.9706667%
+
+# 0 vs 5 trt
+FM_0_5 <- fit_0_J17$value - fit_5_J17$value
+mean(FM_0_5)                             # 0.2670914
+quantile(FM_0_5, probs=c(0.055,0.945))   # (-2.651720  3.096615)
+sum(FM_0_5>0)/6000                       # 0.5606667%
+
+# 0 vs 10 trt
+FM_0_10 <- fit_0_J17$value - fit_10_J17$value
+mean(FM_0_10)                             # 4.788466
+quantile(FM_0_10, probs=c(0.055,0.945))   # (2.295294 7.291626)
+sum(FM_0_10>0)/6000                       # 0.9991667%
+```
+
+# compare Mass gains/loss between trts
+```{r}
+# 0 vs 0.1 trt
+Mdiff0_0.1 <- diff_M0_2617 - diff_M0.1_2617
+View(Mdiff0_0.1)
+mean(Mdiff0_0.1)                             # 0.06536809
+quantile(Mdiff0_0.1, probs=c(0.055,0.945))   # (-0.8183748  0.9424514)
+sum(Mdiff0_0.1>0)/6000                       # 0.5488333%
+
+# 0 vs 1 trt
+Mdiff0_1 <- diff_M0_2617 - diff_M1_2617
+mean(Mdiff0_1)                             # 0.1923736
+quantile(Mdiff0_1, probs=c(0.055,0.945))   # (-0.682826 1.097129)
+sum(Mdiff0_1>0)/6000                       # 0.6346667%
+
+# 0 vs 5 trt
+Mdiff0_5 <- diff_M0_2617 - diff_M5_2617
+mean(Mdiff0_5)                             # 0.3055707
+quantile(Mdiff0_5, probs=c(0.055,0.945))   # (-0.6546645  1.2718187)
+sum(Mdiff0_5>0)/6000                       # 0.6961667%
+
+# 0 vs 10 trt
+Mdiff0_10 <- diff_M0_2617 - diff_M10_2617
+mean(Mdiff0_10)                             # 0.2086764
+quantile(Mdiff0_10, probs=c(0.055,0.945))   # (-0.6548029 1.1005796)
+sum(Mdiff0_10>0)/6000                       # 0.6438333%
+```

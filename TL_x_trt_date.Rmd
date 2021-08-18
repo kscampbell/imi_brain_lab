@@ -1,0 +1,398 @@
+---
+title: "Untitled"
+author: "Kaitlyn Campbell"
+date: "8/16/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r load libraries}
+library(brms)
+library(dplyr)
+library(ggplot2)
+library(tibble)  
+library(tidyverse)
+library(readr)
+library(faintr)
+library(devtools)
+library(rstan)
+library(rstantools)
+library(readr)
+library(tidybayes)
+```
+```{r import and wrangle data}
+lab <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Brain_IMI_Data.csv")
+
+lab$Treatment <- as.factor(lab$Treatment)
+
+# Rename TL_mm_date columns with just the date
+lab <- lab %>% 
+  rename(June_26 = TL_mm_June_26) %>% 
+  rename(July_17 = TL_mm_July_17)
+
+lab <- lab %>% 
+  group_by(Animal_ID) %>% 
+  mutate(TL_diff = (July_17) - (June_26))
+
+# Make a new column named 'TL_date' and fill it with the dates that we just created above. Then make another new column named 'TL_mm' and fill the column with TL_mm values that correspond to each date in the new 'TL_date' column
+lab_long <- lab %>% 
+  gather(key = "TL_date", value = "TL_mm", -Animal_ID, -Treatment, -Mass_g_June_26, -Mass_g_July_3, -Mass_g_July_10, -Mass_g_July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein, -CRKT_sec_July_4, -CRKT_sec_July_8, -CRKT_sec_July_11)
+
+# Make Mass_date a factor
+lab_long$TL_date <- as.factor(lab_long$TL_date)
+lab_long$Treatment <- as.factor(lab_long$Treatment)
+
+```
+
+# gamma distribution
+# average adult northern leopard frogs range from 2-4.5 inches (~50 - 115mm)
+# exp(4) = 54 mm for average (intercept prior) +/- exp(4) = 54 mm 
+
+```{r load model}
+load(file = "/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/saved_models/Models_used_in_paper/mtl5.rda")
+```
+```{r gamma distribution model - DONT RUN}
+mtl5 <- brm(TL_mm ~ Treatment * TL_date + (1|Animal_ID), data = lab_long, family = Gamma(link = "log"), 
+              prior=c(prior(normal(4, 3), class=Intercept),
+                  prior(normal(0, 1), class = b),
+                  prior(gamma(0.01,0.01), class="shape")),
+          iter = 2000 , warmup = 500, chains = 4, cores = 4,
+          seed = 5, save_pars = save_pars(all = TRUE))
+
+print(mtl5, prior=T)
+```
+
+```{r model checks}
+pp_check(mtl5, type = "dens_overlay", resp = "TL_mm", nsamples=100)
+pp_check(mtl5, type = "dens_overlay", resp = "Intercept", nsamples=100)
+pp_check(mtl5, type = "dens_overlay", resp = "Treatment", nsamples=100)
+
+lab_long %>%
+  tidybayes::add_predicted_draws(model = mtl5, n = 100) %>%
+  ungroup() %>%
+  ggplot(aes(x = .prediction, group = .draw)) +
+  geom_line(stat = 'density',
+            alpha = 0.1,
+            colour = 'blue') +
+  geom_line(stat = 'density',
+            data = lab_long,
+            mapping = aes(x = TL_mm, group = NULL),
+            colour = 'black',
+            size = 1.5) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(x = expression(paste('TL_mm density ')),
+       title = 'TL_mm density, actual versus predicted')
+
+loo_mtl5 <- loo(mtl5, save_psis = TRUE, cores = 2, moment_match = TRUE)
+print(loo_mtl5) # ok = 41 ; p_loo = 34.8 , se = 3.4
+yrep <- posterior_predict(mtl5)
+ppc_loo_pit_overlay(lab_long$TL_mm, 
+                    yrep = yrep, 
+                    lw = weights(loo_mtl5$psis_object))
+
+ppc_intervals(lab_long$TL_mm, yrep = yrep)
+ppc_stat(lab_long$TL_mm, yrep = yrep, stat = "mean")
+ppc_stat(lab_long$TL_mm, yrep = yrep, stat = "sd")
+ppc_stat_grouped(lab_long$TL_mm, group=lab_long$Treatment, yrep = yrep, stat = "mean")
+ppc_stat_grouped(lab_long$TL_mm, group=lab_long$Treatment, yrep = yrep, stat = "sd")
+```
+
+# Extract posterior
+```{r}
+set.seed(4545)
+post_mtl5 <- posterior_samples(mtl5)    # puts chains of model into data frame
+head(post_mtl5)
+nrow(post_mtl5) # 6000
+```
+
+July_17 = default
+```{r compute averages}
+# compute averages on for the first day of the experiment (b_Mass_dateJune_26)
+as_tibble(post_mtl5) %>% 
+  mutate(iteration = 1:nrow(post_mtl5))
+
+Jun26_trt0 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_TL_dateJune_26), type = "0", date = "June 26", iter = 1:nrow(post_mtl5))
+
+Jun26_trt0.1 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment0.1 + post_mtl5$b_TL_dateJune_26 + post_mtl5$`b_Treatment0.1:TL_dateJune_26`), type = "0.1", date = "June 26", iter = 1:nrow(post_mtl5))
+
+Jun26_trt1 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment1 + post_mtl5$b_TL_dateJune_26 + post_mtl5$`b_Treatment1:TL_dateJune_26`), type = "1", date = "June 26", iter = 1:nrow(post_mtl5))
+
+Jun26_trt5 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment5 + post_mtl5$b_TL_dateJune_26 + post_mtl5$`b_Treatment5:TL_dateJune_26`), type = "5", date = "June 26", iter = 1:nrow(post_mtl5))
+
+Jun26_trt10 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment10 + post_mtl5$b_TL_dateJune_26 + post_mtl5$`b_Treatment10:TL_dateJune_26`), type = "10", date = "June 26", iter = 1:nrow(post_mtl5))
+
+mu_Jun26_trt <- rbind(Jun26_trt0, Jun26_trt0.1, Jun26_trt1, Jun26_trt5, Jun26_trt10)
+View(mu_Jun26_trt)
+
+# compute averages on for the last day of the experiment (July 17 - default in model)
+Jul17_trt0 <- data.frame(value = exp(post_mtl5$b_Intercept), type = "0", date = "July 17", iter = 1:nrow(post_mtl5))
+
+Jul17_trt0.1 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment0.1), type = "0.1", date = "July 17", iter = 1:nrow(post_mtl5))
+
+Jul17_trt1 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment1), type = "1", date = "July 17", iter = 1:nrow(post_mtl5))
+
+Jul17_trt5 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment5), type = "5", date = "July 17", iter = 1:nrow(post_mtl5))
+
+Jul17_trt10 <- data.frame(value = exp(post_mtl5$b_Intercept + post_mtl5$b_Treatment10), type = "10", date = "July 17", iter = 1:nrow(post_mtl5))
+
+mu_Jul17_trt <- rbind(Jul17_trt0, Jul17_trt0.1, Jul17_trt1, Jul17_trt5, Jul17_trt10)
+View(mu_Jul17_trt)
+
+mu_TL <- rbind(mu_Jun26_trt, mu_Jul17_trt)
+```
+
+# create summary output
+```{r}
+summary <- mu_TL %>% 
+  group_by(type, date) %>% 
+  summarize(mean=mean(value),
+            median = median(value),
+            sd = sd(value),
+            low89 = quantile(value, probs = 0.055),
+            high89 = quantile(value, probs = 0.945)) %>%
+  mutate_if(is.numeric,round,2)
+summary
+```
+   type  date     mean median    sd low89 high89
+ 1 0     June 26  63.1   63.1  2.15  59.6   66.6
+ 2 0     July 17  69.7   69.7  2.3   66.1   73.5
+ 
+ 3 0.1   June 26  57     57.0  1.98  53.9   60.2
+ 4 0.1   July 17  69.3   69.2  2.43  65.5   73.3
+ 
+ 5 1     June 26  60.8   60.8  2.11  57.5   64.2
+ 6 1     July 17  67.4   67.3  2.31  63.8   71.2
+ 
+ 7 5     June 26  62.4   62.4  2.13  59.0   65.9
+ 8 5     July 17  69.9   69.8  2.37  66.1   73.7
+ 
+ 9 10    June 26  59.0   59.0  2.07  55.8   62.4
+10 10    July 17  64.7   64.7  2.28  61.2   68.4
+
+```{r}
+summary %>% 
+  ggplot(aes(x=type, y=mean, ymin=low89, ymax=high89, fill=date)) + 
+  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+
+  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
+  xlab("Treatment (µg/L)")+
+  ylab("Total Length (mm)")+
+  theme_classic()+
+  scale_fill_manual(name="Measurement Date", labels = c("June 26","July 17"),  values = c("grey100","black"))+
+  theme(axis.text.x = element_text(color="black", size="10"))+
+  theme(axis.text.y = element_text(color="black", size="10"))+
+  theme(legend.title = element_text(face="bold", size="10"))
+```
+
+
+# Plot results however you see fit
+```{r}
+# add color blind palette 
+colorpalette <- c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b")
+
+TL_trt_datep <- mu_TL %>% 
+  ggplot(aes(x = type, y = value, fill = type)) +
+  geom_violin(position = "dodge") +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  labs(x = "Treatment (µg/L)", 
+       y = "Total body length (mm)",
+       caption = "Fig. # Comparison of total body length (mm) in Northern Leopard frogs by treatment and date. \nResults are averages and 95% credible intervals from the posterior distribution of a Bayesian \ngeneralized linear mixed model.",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=colorpalette) + 
+  theme(plot.caption = element_text(hjust = 0)) + facet_grid(.~date)
+TL_trt_datep 
+
+# save plot
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/TL_trt_datep.tiff", TL_trt_datep, dpi=400, width=5, height=3, units="in")
+```
+
+# Calculate average growth by trt and determine if final TL was vastly different from starting TL
+```{r}
+# trt 0
+diff_TL0_2617 <- as.data.frame((Jul17_trt0$value) - (Jun26_trt0$value))
+diff_TL0_2617 <- diff_TL0_2617 %>% 
+  rename(difference = '(Jul17_trt0$value) - (Jun26_trt0$value)')
+diff_TL0_2617 <- diff_TL0_2617 %>% 
+  mutate(Treatment = "0")
+
+mean(diff_TL0_2617$difference) # 6.617684
+quantile(diff_TL0_2617$difference,probs=c(0.055,0.945)) # (3.506098, 9.684612)
+sum(diff_TL0_2617$difference>0)/6000 # 0.9998333
+
+# trt 0.1
+diff_TL0.1_2617 <- as.data.frame((Jul17_trt0.1$value) - (Jun26_trt0.1$value))
+diff_TL0.1_2617 <- diff_TL0.1_2617 %>% 
+  rename(difference = '(Jul17_trt0.1$value) - (Jun26_trt0.1$value)')
+diff_TL0.1_2617 <- diff_TL0.1_2617 %>% 
+  mutate(Treatment = '0.1')
+
+mean(diff_TL0.1_2617$difference) # 12.30424
+quantile(diff_TL0.1_2617$difference,probs=c(0.055,0.945)) # (9.343028, 15.349145)
+sum(diff_TL0.1_2617$difference>0)/6000 # 1
+
+# trt 1
+diff_TL1_2617 <- as.data.frame((Jul17_trt1$value) - (Jun26_trt1$value))
+diff_TL1_2617 <- diff_TL1_2617 %>% 
+  rename(difference = '(Jul17_trt1$value) - (Jun26_trt1$value)')
+diff_TL1_2617 <- diff_TL1_2617 %>% 
+  mutate(Treatment = "1")
+
+mean(diff_TL1_2617$difference) # 6.576651
+quantile(diff_TL1_2617$difference,probs=c(0.055,0.945)) # (3.571459, 9.556155)
+sum(diff_TL1_2617$difference>0)/6000 # 0.9993333
+
+# trt 5
+diff_TL5_2617 <- as.data.frame((Jul17_trt5$value) - (Jun26_trt5$value))
+diff_TL5_2617 <- diff_TL5_2617 %>% 
+  rename(difference = '(Jul17_trt5$value) - (Jun26_trt5$value)')
+diff_TL5_2617 <- diff_TL5_2617 %>% 
+  mutate(Treatment = "5")
+
+mean(diff_TL5_2617$difference) # 7.418026
+quantile(diff_TL5_2617$difference,probs=c(0.055,0.945)) # (4.38806, 10.53762)
+sum(diff_TL5_2617$difference>0)/6000 # 0.9991667
+
+# trt 10
+diff_TL10_2617 <- as.data.frame((Jul17_trt10$value) - (Jun26_trt10$value))
+diff_TL10_2617 <- diff_TL10_2617 %>% 
+  rename(difference = '(Jul17_trt10$value) - (Jun26_trt10$value)')
+diff_TL10_2617 <- diff_TL10_2617 %>% 
+  mutate(Treatment = "10")
+
+mean(diff_TL10_2617$difference) # 5.714901
+quantile(diff_TL10_2617$difference,probs=c(0.055,0.945)) # (2.795012, 8.631394)
+sum(diff_TL10_2617$difference>0)/6000 # 0.9991667
+```
+
+# combine all dataframes with differences for each treatment
+```{r}
+all_diff_2617 <- rbind(diff_TL0_2617, diff_TL0.1_2617, diff_TL1_2617, diff_TL5_2617, diff_TL10_2617)
+
+all_diff_2617$Treatment <- as.factor(all_diff_2617$Treatment)
+```
+```{r}
+all_diff_2617 %>% 
+  group_by(Treatment) %>% 
+  summarize(mean = mean(difference),
+            sd = sd(difference))
+```
+
+# plot
+```{r}
+# reorder levels
+all_diff_2617$Treatment <- factor(all_diff_2617$Treatment, levels = c("0", "0.1", "1", "5", "10"))
+
+colorpalette <- c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b")
+
+TL_trt_diffs <- all_diff_2617 %>% 
+  ggplot(aes(x = Treatment, y = difference, fill = Treatment)) +
+  geom_violin(position = "dodge") +
+  geom_boxplot(outlier.shape = NA, width = 0.1, position = position_dodge(0.9))+
+  geom_jitter(data=lab, aes(x=Treatment, y=TL_diff), shape=21, alpha=0.6) +
+  labs(x = "Treatment (µg/L)", 
+       y = "Increase in Total Body Length (mm)",
+       fill= "Treatment (µg/L)") +
+  theme(text= element_text(size=20), 
+        plot.title = element_text(face = "bold", hjust = 0.5), 
+        plot.caption = element_text(size=10)) +
+  theme_classic() + scale_fill_manual(values=colorpalette) + 
+  theme(axis.text.x = element_text(color="black", size="10")) +
+  theme(axis.text.y = element_text(color="black", size="10")) +
+  theme(legend.title = element_text(face="bold", size="10"))
+TL_trt_diffs
+
+# save plot
+#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/TL_trt_diffs.tiff", TL_trt_diffs, dpi=400, width=5, height=3, units="in")
+```
+
+# compare TL gains between trts
+```{r}
+# 0 vs 0.1 trt
+trt_0 <- filter(all_diff_2617, Treatment == 0)
+trt_0.1 <- filter(all_diff_2617, Treatment == 0.1)
+trt_0_0.1 <- trt_0.1$difference - trt_0$difference
+mean(trt_0_0.1) # 5.686559
+sd(trt_0_0.1) # 2.686439
+quantile(trt_0_0.1, probs=c(0.055,0.945))   # (1.462118 , 9.969254)
+sum(trt_0_0.1>0)/6000                       # 0.9821667%
+
+# 0 vs 1 trt
+# trt_0 <- filter(all_diff_2617, Treatment == 0)
+trt_1 <- filter(all_diff_2617, Treatment == 1)
+trt_0_1 <- trt_0$difference - trt_1$difference
+mean(trt_0_1) # 0.04103372
+quantile(trt_0_1, probs=c(0.055,0.945))   # (-4.233006 , 4.356799)
+sum(trt_0_1>0)/6000                       # 0.5113333%
+
+# 0 vs 5 trt
+# trt_0 <- filter(all_diff_2617, Treatment == 0)
+trt_5 <- filter(all_diff_2617, Treatment == 5)
+trt_0_5 <- trt_5$difference - trt_0$difference
+mean(trt_0_5) # 0.8003416
+quantile(trt_0_5, probs=c(0.055,0.945))   # (-3.571870 , 5.092191)
+sum(trt_0_5>0)/6000                       # 0.6206667%
+
+# 0 vs 10 trt
+# trt_0 <- filter(all_diff_2617, Treatment == 0)
+trt_10 <- filter(all_diff_2617, Treatment == 10)
+trt_0_10 <- trt_0$difference - trt_10$difference
+mean(trt_0_10) # 0.9027833
+quantile(trt_0_10, probs=c(0.055,0.945))   # (-3.361973 , 5.103463)
+sum(trt_0_10>0)/6000                       # 0.6376667%
+
+
+# 0.1 vs 1 trt
+# trt_0.1 <- filter(all_diff_2617, Treatment == 0.1)
+# trt_1 <- filter(all_diff_2617, Treatment == 1)
+trt_0.1_1 <- trt_0.1$difference - trt_1$difference
+mean(trt_0.1_1) # 5.727593
+quantile(trt_0.1_1, probs=c(0.055,0.945))   # (1.488746 , 9.991618)
+sum(trt_0.1_1>0)/6000                       # 0.9851667%
+
+# 0.1 vs 5 trt
+# trt_0.1 <- filter(all_diff_2617, Treatment == 0.1)
+# trt_5 <- filter(all_diff_2617, Treatment == 5)
+trt_0.1_5 <- trt_0.1$difference - trt_5$difference
+mean(trt_0.1_5) # 4.886218
+quantile(trt_0.1_5, probs=c(0.055,0.945))   # (0.5537514 , 9.2541619)
+sum(trt_0.1_5>0)/6000                       # 0.9636667%
+
+# 0.1 vs 10 trt
+# trt_0.1 <- filter(all_diff_2617, Treatment == 0.1)
+# trt_10 <- filter(all_diff_2617, Treatment == 10)
+trt_0.1_10 <- trt_0.1$difference - trt_10$difference
+mean(trt_0.1_10) # 6.589343
+quantile(trt_0.1_10, probs=c(0.055,0.945))   # (2.385673 , 10.764145)
+sum(trt_0.1_10>0)/6000                       # 0.9946667%
+```
+
+```{r}
+lab <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Brain_IMI_Data.csv")
+
+lab$Treatment <- as.factor(lab$Treatment)
+
+# Rename TL_mm_date columns with just the date
+lab <- lab %>% 
+  rename(June_26 = TL_mm_June_26) %>% 
+  rename(July_17 = TL_mm_July_17)
+
+lab <- lab %>% 
+  group_by(Animal_ID) %>% 
+  mutate(TL_diff = (July_17) - (June_26))
+
+ggplot(lab, aes(x=IMI_ng_mg_protein, y=Mass_diff)) + geom_point(aes(color=Treatment)) + geom_smooth(method="lm") + scale_y_log10()
+```
+
+```{r}
+lab_long_mass <- lab %>% 
+  gather(key = "Mass_date", value = "Body_mass_g", -Animal_ID, -Treatment, -June_26, -July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein, -CRKT_sec_July_4, -CRKT_sec_July_8, -CRKT_sec_July_11, -TL_diff)
+
+# reorder levels
+lab_long_mass$Mass_date <- factor(lab_long_mass$Mass_date, levels = c("Mass_g_June_26", "Mass_g_July_3", "Mass_g_July_10", "Mass_g_July_17"))
+
+
+ggplot(lab_long_mass, aes(x=Treatment, y=Body_mass_g)) + geom_boxplot() + geom_jitter(aes(color=Treatment)) + facet_wrap(~Mass_date)
+```
+
