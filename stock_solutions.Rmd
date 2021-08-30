@@ -1,0 +1,40 @@
+---
+title: "stock_solutions_imi_lab"
+author: "Kaitlyn Campbell"
+date: "8/28/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# stock solutions from imi brain lab experiment 2019
+
+
+# load libraries
+```{r}
+library(brms)
+library(dplyr)
+library(ggplot2)
+library(tibble)  
+library(tidyverse)
+library(devtools)
+library(rstan)
+library(rstantools)
+library(tidybayes)
+library(bayesplot)
+```
+
+# import data
+```{r}
+stock <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Data/stock_solutions.csv")
+
+stock$Sample_ID <- as.factor(stock$Sample_ID)
+```
+
+```{r}
+stock <- stock %>% 
+  mutate(accuracy = (actual / target)*100)
+
+stock %>% 
+  summarize(mean = mean(accuracy)) # on average stock solutions were 76.4 % of target solution
+```
+
