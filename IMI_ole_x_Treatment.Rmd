@@ -39,41 +39,6 @@ lab_ole <- lab %>%
   mutate(IMI_ole = IMI_ole_ng_mg_protein + 0.000001)
 ```
 
-# don't run
-```{r}
-# Rename Crkt time columns with date
-lab <- lab %>% 
-  rename(July_4_19 = CRKT_sec_July_4) %>% 
-  rename(July_8_19 = CRKT_sec_July_8) %>% 
-  rename(July_11_19 = CRKT_sec_July_11)
-```
-```{r}
-# Take 'date' row names and make them into 1 column & fill with crkt time
-lab_long <- lab %>% 
-  gather(key = "Crkt_date", value = "Crkt_time", -Animal_ID, -Treatment, -Mass_g_June_26, -Mass_g_July_3, -Mass_g_July_10, -Mass_g_July_17, -TL_mm_June_26, -TL_mm_July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein)
-
-# Make Crkt_date a factor
-lab_long$Crkt_date <- as.factor(lab_long$Crkt_date)
-lab_long$Treatment <- as.factor(lab_long$Treatment)
-
-# Visualize data
-hist(lab$IMI_ole_ng_mg_protein) # Values range from 0 to 25 ng/mg protein
-```
-```{r}
-lab %>% 
-  ggplot(aes(x=Treatment, y=IMI_ole_1, fill=Treatment)) + geom_violin(position = "dodge") + geom_boxplot(outlier.shape = NA, width = 0.05, position = position_dodge(0.9))
-
-lab %>% 
-  group_by(Treatment) %>% 
-  summarize(mean = mean(IMI_ole_1))
-```
-```{r}
-ggplot(data = tibble(x = seq(from = 0, to = 30, by = .1)), 
-       aes(x = x, y = dnorm(x, mean = -1, sd = 1))) +
-  geom_line() +
-  ylab("density")
-```
-
 # based on model_selection_imi_ole.Rmd, fitole35 is the best fit
 ```{r}
 # load model
@@ -129,7 +94,7 @@ mu_10_ole <- data.frame(IMI_ole = post_fit_ole$b_Intercept+post_fit_ole$b_Treatm
 ole_trt <- rbind(mu_0_ole, mu_0.1_ole, mu_1_ole, mu_5_ole, mu_10_ole)
 ```
 
-# Summary stats from posterior with 95% CI
+# Summary stats from posterior with 89% CI
 ```{r}
 ole_trt_summary <- ole_trt %>% 
   group_by(type) %>% 
@@ -142,61 +107,10 @@ ole_trt_summary <- ole_trt %>%
 
 ole_trt_summary
 ```
-# from fitole35 95% CrI:
-  type   mean median    sd low95 high95
-  <fct> <dbl>  <dbl> <dbl> <dbl>  <dbl>
-1 0      2.18   2.21  0.66  0.8    3.39
-2 0.1    1.72   1.76  0.75  0.13   3.08
-3 1      2.36   2.4   0.74  0.8    3.7 
-4 5      7.3    7.31  0.8   5.71   8.86
-5 10    15.0   15.0   0.83 13.4   16.6 
-
-# from fitole35 89% CrI:
-  type   mean median    sd low89 high89
-1 0      2.18   2.21  0.66  1      3.24
-2 0.1    1.72   1.76  0.75  0.38   2.92
-3 1      2.36   2.4   0.74  1.01   3.53
-4 5      7.3    7.31  0.8   5.93   8.67
-5 10    15.0   15.0   0.83 13.6   16.4
-
-# make figure for model summaries
-```{r}
-ole_trt_summary %>% 
-  ggplot(aes(x=type, y=mean, ymin=low89, ymax=high89, fill=type)) + 
-  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+ scale_y_log10() +
-  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
-  xlab("Treatment (µg/L)")+
-  ylab("imi ole (ng/mg protein)")+
-  labs(caption = "Median values from olefit5") +
-  theme_classic()+
-  theme(axis.text.x = element_text(color="black", size="10"))+
-  theme(axis.text.y = element_text(color="black", size="10"))+
-  theme(legend.title = element_text(face="bold", size="10"))
-
-ole_trtp <- ole_trt_summary %>% 
-  ggplot(aes(x=type, y=mean, ymin=low89, ymax=high89, fill=type)) + 
-  geom_point(size=4, position=position_dodge(width=0.4), shape=21)+ scale_y_log10() +
-  geom_errorbar(width=0.1, position=position_dodge(width=0.4)) +
-  xlab("Treatment (µg/L)")+
-  ylab("Imidacloprid-Olefin \nBrain Concentration \n(ng/mg protein)")+
-  labs(caption = "Summary of imidacloprid-olefin brain concentrations in \nNorthern Leopard frogs by treatment. Results are averages \nand 95% credible intervals from the posterior distribution of \na Bayesian generalized linear mixed model. Y-axis is on the \nlog scale.",
-fill= "Treatment (µg/L)") +
-  theme_classic() +
-  theme(axis.text.x = element_text(color="black", size="10"))+
-  theme(axis.text.y = element_text(color="black", size="10"))+
-  theme(legend.title = element_text(face="bold", size="10"))+
-  theme(plot.caption = element_text(hjust = 0))
-ole_trtp
-
-#ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/ole_trtp.tiff", ole_trtp, dpi=400, width=5, height=3, units="in")
-```
 
 # Visualize probability mass
 ```{r}
-# add color blind palette 
-#cbbPalette <- c("#999999", "#E69F00", "#009E73", "#D55E00", "#56B4E9")
-
-# new color palette
+# add color palette
 colorpalette <- c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b")
 
 ole_trt_df <- as.data.frame(ole_trt)
@@ -209,51 +123,23 @@ ole_p <- ggplot() +
   geom_jitter(data=lab_ole, aes(x=Treatment, y=IMI_ole_ng_mg_protein), size=0.8, shape=1, width = 0.25) + 
   #scale_y_log10() +
   labs(x = "Treatment (µg/L)",
-       y = "Imidacloprid Olefin\nBrain Concentration \n(ng/mg protein)",
+       y = "Imidacloprid Olefin\nBrain Concentration \n(pg/mg protein)",
        fill= "Treatment (µg/L)") +
   theme_classic() + scale_fill_manual(values=colorpalette) + theme(plot.caption = element_text(hjust = 0))+ theme(axis.text.x = element_text(color="black", size="10"))+
   theme(axis.text.y = element_text(color="black", size="10"))+
   theme(legend.title = element_text(face="bold", size="10"))
 ole_p
 
-
-ggplot() +
-  geom_violin(data=ole_trt, aes(x=type, y=IMI_ole, fill=type), position = "dodge") +
-geom_boxplot(data=ole_trt, aes(x=type, y=IMI_ole, fill=type), outlier.shape = NA, width = 0.1, position = position_dodge(0.9)) +
-  geom_jitter(data=lab_ole, aes(x=Treatment, y=IMI_ole_ng_mg_protein), size=0.8, shape=1, width = 0.25) + 
-  labs(x = "Treatment (µg/L)",
-       y = "Imidacloprid Olefin\nBrain Concentration \n(ng/mg protein)",
-       fill= "Treatment (µg/L)") +
-  theme_classic() + 
-  scale_fill_manual(values=colorpalette, labels=c("0", "0.5", "5", "25", "50")) + theme(plot.caption = element_text(hjust = 0)) + 
-  theme(axis.text.x = element_text(color="black", size="10"))+
-  theme(axis.text.y = element_text(color="black", size="10"))+
-  theme(legend.title = element_text(face="bold", size="10"))
-
-# create labels with the correct concentrations on the x-axis
-conclabels <- c("0", "0.5", "5", "25", "50")
-
-ole_trt_p <- ole_trt + scale_x_discrete(labels= conclabels)
-ole_trt_p
-
-
 #ggsave("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/plots/ole_p.tiff", ole_p, dpi=400, width=5, height=3, units="in")
-
-#caption = "Fig. # Comparison of imidacloprid-olefin brain concentrations \n(ng/mg protein) in Northern Leopard frogs by treatment. Results are \naverages and 95% credible intervals from the posterior distribution of \na Bayesian generalized linear model. Y axis is on the log scale."
 ```
 
-```{r}
-ggplot(lab_ole, aes(x=IMI_ng_mg_protein, y=IMI_ole_ng_mg_protein)) + geom_point() + geom_smooth(method="lm")
-```
-
-
-# Group differences w/ 95% CI
+# Group differences w/ 89% CI
 ```{r}
 group_diffs_imi_ole <- ole_trt_summary %>% 
   mutate(diff_means = mean - lead(mean))
 group_diffs_imi_ole
 ```
-  type   mean median    sd low95 high95 diff_means
+  type   mean median    sd low89 high89 diff_means
 1 0      2.76   2.77  0.62  1.47   3.96       1.16
 2 0.1    1.6    1.66  0.9  -0.33   3.21      -0.75
 3 1      2.35   2.41  0.75  0.73   3.7       -4.66
@@ -325,6 +211,3 @@ mean(dif_5_0.1$dif) ## 5.574663
 quantile(dif_5_0.1$dif,probs=c(0.045,0.955)) # (3.732806 , 7.482773)
 sum(dif_5_0.1$dif>0)/8800 # 1
 ```
-
-
-
