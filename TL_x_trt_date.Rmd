@@ -51,7 +51,7 @@ lab_long$Treatment <- as.factor(lab_long$Treatment)
 ```{r load model}
 load(file = "/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/saved_models/Models_used_in_paper/mtl5.rda")
 ```
-```{r gamma distribution model - DONT RUN}
+```{r gamma distribution model}
 mtl5 <- brm(TL_mm ~ Treatment * TL_date + (1|Animal_ID), data = lab_long, family = Gamma(link = "log"), 
               prior=c(prior(normal(4, 3), class=Intercept),
                   prior(normal(0, 1), class = b),
@@ -153,21 +153,6 @@ summary <- mu_TL %>%
   mutate_if(is.numeric,round,2)
 summary
 ```
-   type  date     mean median    sd low89 high89
- 1 0     June 26  63.1   63.1  2.15  59.6   66.6
- 2 0     July 17  69.7   69.7  2.3   66.1   73.5
- 
- 3 0.1   June 26  57     57.0  1.98  53.9   60.2
- 4 0.1   July 17  69.3   69.2  2.43  65.5   73.3
- 
- 5 1     June 26  60.8   60.8  2.11  57.5   64.2
- 6 1     July 17  67.4   67.3  2.31  63.8   71.2
- 
- 7 5     June 26  62.4   62.4  2.13  59.0   65.9
- 8 5     July 17  69.9   69.8  2.37  66.1   73.7
- 
- 9 10    June 26  59.0   59.0  2.07  55.8   62.4
-10 10    July 17  64.7   64.7  2.28  61.2   68.4
 
 ```{r}
 summary %>% 
@@ -183,10 +168,9 @@ summary %>%
   theme(legend.title = element_text(face="bold", size="10"))
 ```
 
-
 # Plot results however you see fit
 ```{r}
-# add color blind palette 
+# add color palette 
 colorpalette <- c("#8d96a3","#66a182","#edae49","#6699CC","#d1495b")
 
 TL_trt_datep <- mu_TL %>% 
@@ -367,32 +351,3 @@ mean(trt_0.1_10) # 6.589343
 quantile(trt_0.1_10, probs=c(0.055,0.945))   # (2.385673 , 10.764145)
 sum(trt_0.1_10>0)/6000                       # 0.9946667%
 ```
-
-```{r}
-lab <- read_csv("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Brain_IMI_Data.csv")
-
-lab$Treatment <- as.factor(lab$Treatment)
-
-# Rename TL_mm_date columns with just the date
-lab <- lab %>% 
-  rename(June_26 = TL_mm_June_26) %>% 
-  rename(July_17 = TL_mm_July_17)
-
-lab <- lab %>% 
-  group_by(Animal_ID) %>% 
-  mutate(TL_diff = (July_17) - (June_26))
-
-ggplot(lab, aes(x=IMI_ng_mg_protein, y=Mass_diff)) + geom_point(aes(color=Treatment)) + geom_smooth(method="lm") + scale_y_log10()
-```
-
-```{r}
-lab_long_mass <- lab %>% 
-  gather(key = "Mass_date", value = "Body_mass_g", -Animal_ID, -Treatment, -June_26, -July_17, -IMI_ng_g_tissue, -IMI_ole_ng_g_tissue, -IMI_ng_mg_protein, -IMI_ole_ng_mg_protein, -CRKT_sec_July_4, -CRKT_sec_July_8, -CRKT_sec_July_11, -TL_diff)
-
-# reorder levels
-lab_long_mass$Mass_date <- factor(lab_long_mass$Mass_date, levels = c("Mass_g_June_26", "Mass_g_July_3", "Mass_g_July_10", "Mass_g_July_17"))
-
-
-ggplot(lab_long_mass, aes(x=Treatment, y=Body_mass_g)) + geom_boxplot() + geom_jitter(aes(color=Treatment)) + facet_wrap(~Mass_date)
-```
-
