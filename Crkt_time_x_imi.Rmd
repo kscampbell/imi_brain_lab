@@ -55,10 +55,8 @@ view(d)
 d <- d[!duplicated(d), ]
 ```
 
-```{r}
+```{r load saved model}
 load("/Users/kaitlyn.campbell/OneDrive - The University of South Dakota/Dissertation/Chapter4_Brains_IMI/Lab/Bayes_code/saved_models/m_5.5.rda")
-
-plot(hist(rexp(100, 0.04)))
 
 m_5.5 <- brm(Mean_crkt_time ~ log(IMI_ng_mg_protein), data = d , family = Gamma(link = "log"),
            prior = c(prior(normal(0,2), class= Intercept),
@@ -69,12 +67,12 @@ m_5.5 <- brm(Mean_crkt_time ~ log(IMI_ng_mg_protein), data = d , family = Gamma(
           save_pars = save_pars(all = TRUE))
 plot(m_5.5)
 print(m_5.5)
+```
+
+```{r extract posterior}
 post_m5 <- posterior_samples(m_5.5)
 head(post_m5)
 nrow(post_m5) # 7200
-
-ggplot(d, aes(x=log(IMI_ng_mg_protein), y=Mean_crkt_time)) + geom_smooth(method="lm") + geom_jitter(aes(color=Treatment))
-ggplot(d, aes(x=IMI_ng_mg_protein, y=Mean_crkt_time)) + geom_smooth(method="lm") + geom_jitter(aes(color=Treatment))
 ```
 
 ```{r}
